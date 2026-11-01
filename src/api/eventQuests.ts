@@ -28,8 +28,27 @@ interface EventCache {
   fetchedAt: number;
 }
 
-// v2 : relit la liste tout de suite (quêtes Halloween 2026 ajoutées au wiki pendant le cache de 7 jours)
-const CACHE_KEY = "events:v2";
+// v3 : relit la liste tout de suite (quêtes hors événement ci-dessous)
+const CACHE_KEY = "events:v3";
+/**
+ * Quêtes ordinaires du jeu absentes de tarkov.dev (novembre 2026) et hors « Event_content » sur le wiki.
+ * Lues comme les quêtes d'événement ; buildEventTasks les retire dès que tarkov.dev les a.
+ */
+const EXTRA_QUESTS = [
+  "A Familiar Face...",
+  "Scope the Clearing",
+  "To the Light - Getting Acquainted",
+  "To the Light - Trust but Verify",
+  "To the Light - False Call",
+  "To the Light - Someone Called?",
+  "To the Light - The Other Side",
+  "To the Light - Fallen Bird",
+  "To the Light - Clip Their Wings",
+  "To the Light - Bite the Dust",
+  "To the Light - Dangerous Ambitions",
+  "To the Light - A Time to Gather Stones",
+  "To the Light - A Time to Throw Stones",
+];
 const BATCH = 50;
 const MAX_CONTINUATIONS = 5;
 
@@ -152,7 +171,7 @@ async function listEventPages(): Promise<string[]> {
 }
 
 async function fetchEventEntries(): Promise<EventEntry[]> {
-  const titles = await listEventPages();
+  const titles = [...new Set([...(await listEventPages()), ...EXTRA_QUESTS])];
   const entries: EventEntry[] = [];
   for (let i = 0; i < titles.length; i += BATCH) {
     const json = await wikiRequest({

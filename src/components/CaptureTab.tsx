@@ -7,7 +7,7 @@ import type { Task } from "../types";
 import { PhoneCapture } from "./PhoneCapture";
 import { isStaleBuildError, staleBuildMessage } from "../lib/staleBuild";
 import { mergeOcrResults } from "../lib/phoneCapture";
-import { matchOcrLines, type OcrMatch, type OcrMatchResult } from "../lib/ocrMatch";
+import { matchOcrLines, offColumnLines, type OcrMatch, type OcrMatchResult } from "../lib/ocrMatch";
 import type { OcrProgress, Tone } from "../lib/ocr";
 import { tr } from "../lib/i18n";
 import { UiIcon } from "./UiIcon";
@@ -72,12 +72,20 @@ export function CaptureTab({ tasks, pasted, onApply }: Props) {
       for (const [i, blob] of blobs.entries()) {
         const photo: [number, number] | undefined = blobs.length > 1 ? [i + 1, blobs.length] : undefined;
         const lines = await readImageLines(blob, (progress) => setState({ step: "reading", progress, photo }), { whiteText: phone });
-        const r = matchOcrLines(
-          // liste d'un marchand : chaque ligne commence par l'icône de la quête (et la flèche des tâches
-          // essentielles), lues « ES », « v @ »…
-          lines.map((l) => (l.tone ? l.text.replace(/^(\S{1,2} ){1,2}/, "") : l.text)),
-          tasks,
-        );
+        // liste d'un marchand : chaque ligne commence par l'icône de la quête (et la flèche des tâches
+        // essentielles), lues « ES », « v @ »… Le texte entier reste s'il ressemble plus à une quête
+        // (« No Swiping » perdait son « No »)
+        const score = (text: string) => {
+          const r = matchOcrLines([text], tasks);
+          return (r.recognized[0] ?? r.uncertain[0])?.score ?? 0;
+        };
+        const texts = lines.map((l) => {
+          const stripped = l.tone ? l.text.replace(/^(\S{1,2} ){1,2}/, "") : l.text;
+          return stripped !== l.text && score(l.text) > score(stripped) ? l.text : stripped;
+        });
+        let r = matchOcrLines(texts, tasks);
+        const off = offColumnLines(r, lines);
+        if (off.size) r = matchOcrLines(texts.map((t, i) => (off.has(i) ? "" : t)), tasks);
         const withTone = (m: OcrMatch) => ({ ...m, tone: lines[m.lineIndexes[0]].tone });
         results.push({ ...r, recognized: r.recognized.map(withTone), uncertain: r.uncertain.map(withTone) });
       }

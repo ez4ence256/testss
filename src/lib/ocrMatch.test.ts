@@ -2,7 +2,7 @@
 // lancée). Noms réels de l'API tarkov.dev (français et anglais).
 import { describe, expect, it } from "vitest";
 import type { Task } from "../types";
-import { UNCERTAIN_MIN, dominantMap, matchItemLines, matchOcrLines, normalizeOcr, numbersOf, similarity } from "./ocrMatch";
+import { UNCERTAIN_MIN, dominantMap, matchItemLines, matchOcrLines, normalizeOcr, numbersOf, offColumnLines, similarity } from "./ocrMatch";
 
 const t = (id: string, name: string, nameEn: string): Pick<Task, "id" | "name" | "nameEn"> => ({ id, name, nameEn });
 const TASKS = [
@@ -103,6 +103,34 @@ describe("rapprochement des lignes OCR", () => {
     expect(r.recognized).toEqual([]);
     expect(r.uncertain).toEqual([]);
     expect(r.unmatched).toEqual(["Inventaire", "12:45"]);
+  });
+
+  it("colonne Lieu : la map « Reserve » n'est pas la quête « Reserve », relue sans elle", () => {
+    const tasks = [...TASKS, t("res", "Réserve", "Reserve")];
+    // tableau : nom (x = 257) | lieu (x = 790)
+    const lines = [
+      { text: "Chumming", x: 257, h: 16 },
+      { text: "Reserve", x: 790, h: 16 },
+      { text: "Debut", x: 257, h: 16 },
+      { text: "First in Line", x: 250, h: 16 },
+      { text: "Reserve", x: 790, h: 16 },
+    ];
+    const r = matchOcrLines(lines.map((l) => l.text), tasks);
+    expect(ids(r.recognized)).toContain("res");
+    const off = offColumnLines(r, lines);
+    expect([...off]).toEqual([1, 4]);
+    const again = matchOcrLines(lines.map((l, i) => (off.has(i) ? "" : l.text)), tasks);
+    expect(ids(again.recognized)).toEqual(["chum", "debut", "fil"]);
+    // la quête « Reserve » dans la colonne des noms reste
+    const own = [...lines, { text: "Reserve", x: 257, h: 16 }];
+    expect(offColumnLines(matchOcrLines(own.map((l) => l.text), tasks), own).has(5)).toBe(false);
+  });
+
+  it("colonne : rien d'écarté sans tableau net (moins de 3 quêtes ou pas alignées)", () => {
+    const two = [{ text: "Chumming", x: 10, h: 16 }, { text: "Reserve", x: 900, h: 16 }];
+    expect(offColumnLines(matchOcrLines(two.map((l) => l.text), [...TASKS, t("res", "Réserve", "Reserve")]), two).size).toBe(0);
+    const scattered = [{ text: "Chumming", x: 10, h: 16 }, { text: "Debut", x: 500, h: 16 }, { text: "First in Line", x: 990, h: 16 }];
+    expect(offColumnLines(matchOcrLines(scattered.map((l) => l.text), TASKS), scattered).size).toBe(0);
   });
 });
 

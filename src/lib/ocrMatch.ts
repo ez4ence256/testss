@@ -138,6 +138,22 @@ export function matchOcrLines(lines: string[], tasks: Pick<Task, "id" | "name" |
   };
 }
 
+/**
+ * Lignes hors de la colonne des noms de quête, à relire sans elles : dans un tableau (tâches d'un marchand,
+ * menu Personnage), la colonne Lieu « Reserve » se lisait comme la quête « Reserve ». Seulement quand une
+ * colonne se dégage : 3 quêtes au moins, les deux tiers alignées à gauche (15 hauteurs de texte : l'icône
+ * de la quête est parfois lue avec le nom, la colonne Lieu est bien plus loin).
+ */
+export function offColumnLines(r: OcrMatchResult, lines: { x?: number; h?: number }[]): Set<number> {
+  const firsts = [...r.recognized, ...r.uncertain].map((m) => lines[m.lineIndexes[0]]).filter((l) => l.x !== undefined && l.h);
+  if (firsts.length < 3) return new Set();
+  const mid = (v: number[]) => [...v].sort((a, b) => a - b)[v.length >> 1];
+  const x = mid(firsts.map((l) => l.x!));
+  const tol = 15 * mid(firsts.map((l) => l.h!));
+  if (firsts.filter((l) => Math.abs(l.x! - x) <= tol).length * 3 < firsts.length * 2) return new Set();
+  return new Set(lines.flatMap((l, i) => (l.x !== undefined && Math.abs(l.x - x) > tol ? [i] : [])));
+}
+
 export interface ItemOcrMatch<T> {
   item: T;
   score: number;

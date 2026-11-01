@@ -146,7 +146,7 @@ export function QuestList({ tasks, traders, maps, mode, onToggle, onOpen, onPhot
               {tradersById.get(t.traderId)?.name ?? "?"}
               {t.minPlayerLevel ? ` · ${tr("niv.", "lvl")} ${t.minPlayerLevel}` : ""}
               {t.kappaRequired ? " · Kappa" : ""}
-              {t.source === "wiki" ? ` · ${tr("Événement · wiki", "Event · wiki")}` : ""}
+              {t.source === "wiki" ? " · wiki" : ""}
             </span>
           </span>
           {p.done > 0 && (

@@ -14,6 +14,9 @@ export interface OcrLine {
   confidence: number;
   /** Fond de la ligne dans la liste des tâches d'un marchand : bleu = terminée, brun = en cours, gris = ratée. */
   tone?: Tone;
+  /** Bord gauche et hauteur du texte, en pixels de l'image lue : situent sa colonne dans un tableau. */
+  x?: number;
+  h?: number;
 }
 
 export type Tone = "blue" | "brown" | "grey";
@@ -198,7 +201,7 @@ export async function readImageLines(
             const x0 = Math.min(...group.map((w) => w.bbox.x0));
             const y0 = Math.min(...group.map((w) => w.bbox.y0));
             const box = [x0, y0, Math.max(1, Math.max(...group.map((w) => w.bbox.x1)) - x0), Math.max(1, Math.max(...group.map((w) => w.bbox.y1)) - y0)] as const;
-            if (text) lines.push({ text, confidence, tone: toneOf(ctx.getImageData(...box).data) });
+            if (text) lines.push({ text, confidence, tone: toneOf(ctx.getImageData(...box).data), x: x0, h: box[3] });
           }
         }
       }

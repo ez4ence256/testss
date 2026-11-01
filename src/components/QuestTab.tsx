@@ -562,7 +562,7 @@ export function QuestTab(p: Props) {
         {traderName(task.traderId)}
         {task.minPlayerLevel ? tr(` · niveau ${task.minPlayerLevel}`, ` · level ${task.minPlayerLevel}`) : ""}
         {task.kappaRequired ? " · Kappa" : ""}
-        {task.source === "wiki" ? ` · ${tr("Événement · wiki", "Event · wiki")}` : ""}
+        {task.source === "wiki" ? " · wiki" : ""}
         {task.nameEn !== task.name ? ` · EN${tr(" : ", ": ")}${task.nameEn}` : ""}
       </div>
 

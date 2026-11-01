@@ -133,7 +133,8 @@ describe("loadEventEntries", () => {
           ),
         );
       }
-      expect(u.searchParams.get("titles")).toBe("All-Inclusive Support");
+      // + les quêtes ordinaires absentes de tarkov.dev (pages inconnues ici : ignorées)
+      expect(u.searchParams.get("titles")).toMatch(/^All-Inclusive Support\|A Familiar Face\.\.\.\|Scope the Clearing\|To the Light - /);
       return new Response(JSON.stringify({ query: { pages: [{ title: "All-Inclusive Support", revisions: [{ slots: { main: { content: ALL_INCLUSIVE } } }] }] } }));
     });
     vi.stubGlobal("fetch", fetchMock);
