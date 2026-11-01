@@ -496,14 +496,15 @@ export default function App() {
   const monitorTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const flushMonitor = useRef(() => {});
   useEffect(() => () => clearTimeout(monitorTimer.current), []);
-  const applyMonitor = (events: Extract<MonitorEvent, { type: "task" }>[], prefix: string) => {
+  const applyMonitor = (events: Extract<MonitorEvent, { type: "task" }>[], prefix: string, reopen = false) => {
     if (!gameMode || !events.length) return;
-    const plan = planMonitorBatch(events, { gameMode, tasks, done: mode.done, failed, selected: mode.selected.map((s) => s.taskId) });
+    const plan = planMonitorBatch(events, { gameMode, tasks, done: mode.done, failed, selected: mode.selected.map((s) => s.taskId), reopen });
     const c = plan.counts;
     const modeName = (m: string) => (m === "regular" ? "PvP" : m === "pve" ? "PvE" : tr("PvP Saison", "PvP Season"));
     const other = events.find((e) => e.gameMode !== gameMode);
     const parts = [
       c.started && tr(`${c.started} quête(s) commencée(s)`, `${c.started} quest(s) started`),
+      c.reopened && tr(`${c.reopened} rouverte(s) (vue(s) en cours)`, `${c.reopened} reopened (seen in progress)`),
       c.finished && tr(`${c.finished} terminée(s)`, `${c.finished} completed`),
       c.failed && tr(`${c.failed} échouée(s)`, `${c.failed} failed`),
       c.prereq && tr(`${c.prereq} prérequis grisé(s)`, `${c.prereq} prerequisite(s) greyed out`),
@@ -861,6 +862,7 @@ export default function App() {
                     ...failed.map((taskId) => ({ taskId, status: "failed" as const })),
                   ].map((t) => ({ type: "task" as const, ...t, gameMode: gameMode!, at: Date.now() })),
                   tr("Capture", "Screenshot"),
+                  true,
                 );
                 const mapId = dominantMap(added);
                 if (!mapId || !maps.some((m) => m.id === mapId)) return null;

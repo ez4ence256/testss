@@ -17,7 +17,7 @@ describe("planMonitorBatch", () => {
   });
   it("finished : coche, grise les prérequis, désélectionne et échoue les branches ; le dernier statut gagne", () => {
     const p = planMonitorBatch([ev("b", "started"), ev("b", "finished")], { ...ctx, selected: ["a", "b"] });
-    expect(p.action).toEqual({ done: ["bo1", "bo2", "ao1", "ao2"], failed: ["c"], deselect: ["b", "a"], select: [] });
+    expect(p.action).toEqual({ done: ["bo1", "bo2", "ao1", "ao2"], undone: [], failed: ["c"], unfailed: [], deselect: ["b", "a"], select: [] });
     expect(p.counts).toMatchObject({ finished: 1, prereq: 1 });
   });
   it("failed : marque échouée et désélectionne", () => {
@@ -36,6 +36,14 @@ describe("planMonitorBatch", () => {
     expect(p.action?.select).toContain("c");
     expect(new Set(p.action?.done).size).toBe(p.action?.done.length);
     expect(p.action?.select.filter((id) => p.action?.failed.includes(id))).toEqual([]);
+  });
+  it("reopen : une quête terminée ou ratée vue en cours est rouverte et resélectionnée (capture seulement)", () => {
+    const greyed = { ...ctx, done: { ao1: 1, ao2: 1 }, failed: { d: true as const } };
+    expect(planMonitorBatch([ev("a", "started"), ev("d", "started")], greyed).action).toBeNull();
+    const p = planMonitorBatch([ev("a", "started"), ev("d", "started")], { ...greyed, reopen: true });
+    expect(p.action).toMatchObject({ undone: ["ao1", "ao2"], unfailed: ["d"], select: ["a", "d"] });
+    expect(p.undo).toMatchObject({ done: ["ao1", "ao2"], failed: ["d"], deselect: ["a", "d"] });
+    expect(p.counts).toMatchObject({ started: 0, reopened: 2 });
   });
   it("ignore autre mode et quêtes inconnues", () => {
     const p = planMonitorBatch([ev("d", "started", "regular" as never), ev("zz", "started")], ctx);

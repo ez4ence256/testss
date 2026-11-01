@@ -10,14 +10,16 @@ type TaskEvent = Extract<MonitorEvent, { type: "task" }>;
 
 export interface MonitorPlan {
   /** Arguments de applyQuestStatus ; undo = l'action inverse. */
-  action: { done: string[]; failed: string[]; deselect: string[]; select: string[] } | null;
+  action: { done: string[]; undone: string[]; failed: string[]; unfailed: string[]; deselect: string[]; select: string[] } | null;
   undo: { done: string[]; undone: string[]; failed: string[]; unfailed: string[]; select: string[]; deselect: string[] } | null;
-  counts: { started: number; finished: number; failed: number; prereq: number; branch: number; ignored: number };
+  counts: { started: number; finished: number; failed: number; prereq: number; branch: number; ignored: number; reopened: number };
 }
 
 export function planMonitorBatch(
   events: TaskEvent[],
-  ctx: { gameMode: GameMode; tasks: Task[]; done: Record<string, number>; failed: Record<string, true>; selected: string[] },
+  // reopen : une quête terminée ou ratée vue en cours est rouverte (capture : l'écran fait foi). Pas pour le Monitor :
+  // un vieux « started » des anciens logs rouvrirait une quête finie depuis
+  ctx: { gameMode: GameMode; tasks: Task[]; done: Record<string, number>; failed: Record<string, true>; selected: string[]; reopen?: boolean },
 ): MonitorPlan {
   const byId = new Map(ctx.tasks.map((t) => [t.id, t]));
   const sel = new Set(ctx.selected);
@@ -28,7 +30,10 @@ export function planMonitorBatch(
     else if (byId.has(e.taskId)) last.set(e.taskId, e.status);
   }
   const ids = (status: TaskEvent["status"]) => [...last].filter(([, s]) => s === status).map(([id]) => id);
-  const S = ids("started").filter((id) => !sel.has(id) && !isGreyed(byId.get(id)!, ctx.done, ctx.failed));
+  const R = ctx.reopen ? ids("started").filter((id) => isGreyed(byId.get(id)!, ctx.done, ctx.failed)) : [];
+  const S = [...ids("started").filter((id) => !sel.has(id) && !isGreyed(byId.get(id)!, ctx.done, ctx.failed)), ...R.filter((id) => !sel.has(id))];
+  const undone = R.flatMap((id) => byId.get(id)!.objectives.filter((o) => ctx.done[o.id]).map((o) => o.id));
+  const unfailed = R.filter((id) => ctx.failed[id]);
   const F = ids("finished");
   const ticks = new Set<string>();
   const tick = (id: string) => byId.get(id)!.objectives.forEach((o) => !ctx.done[o.id] && ticks.add(o.id));
@@ -49,12 +54,12 @@ export function planMonitorBatch(
   const newFail = [...new Set([...X, ...branch, ...pf])].filter((id) => !ctx.failed[id]);
   const startSet = new Set(S);
   const deselect = [...new Set([...F, ...X, ...branch, ...pc, ...pf])].filter((id) => sel.has(id) && !startSet.has(id));
-  const counts = { started: S.length, finished: Fx.length, failed: X.length, prereq: pc.size + pf.size, branch: branch.length, ignored };
-  if (!S.length && !ticks.size && !newFail.length && !deselect.length) return { action: null, undo: null, counts };
+  const counts = { started: S.length - R.filter((id) => !sel.has(id)).length, finished: Fx.length, failed: X.length, prereq: pc.size + pf.size, branch: branch.length, ignored, reopened: R.length };
+  if (!S.length && !ticks.size && !newFail.length && !deselect.length && !R.length) return { action: null, undo: null, counts };
   const done = [...ticks];
   return {
-    action: { done, failed: newFail, deselect, select: S },
-    undo: { done: [], undone: done, failed: [], unfailed: newFail, select: deselect, deselect: S },
+    action: { done, undone, failed: newFail, unfailed, deselect, select: S },
+    undo: { done: undone, undone: done, failed: unfailed, unfailed: newFail, select: deselect, deselect: S },
     counts,
   };
 }
