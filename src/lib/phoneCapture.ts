@@ -46,15 +46,20 @@ export const phoneUrl = (origin: string, code: string) => `${origin}/?phone=${co
 /**
  * Fusionne les lectures de plusieurs photos : une quête vue sur plusieurs photos n'apparaît qu'une fois
  * (meilleur score), classée reconnue ou incertaine selon ce meilleur score. Les lignes non reconnues s'ajoutent.
+ * Son fond est pris sur la meilleure lecture qui en a un : sélectionnée (fond clair) sur une image, elle a
+ * sa couleur sur une autre.
  */
 export function mergeOcrResults(results: OcrMatchResult[]): OcrMatchResult {
   if (results.length === 1) return results[0];
   const best = new Map<string, OcrMatch>();
+  const toned = new Map<string, OcrMatch>();
   for (const m of results.flatMap((r) => [...r.recognized, ...r.uncertain])) {
     const old = best.get(m.taskId);
     if (!old || m.score > old.score) best.set(m.taskId, m);
+    const oldTone = toned.get(m.taskId);
+    if (m.tone && (!oldTone || m.score > oldTone.score)) toned.set(m.taskId, m);
   }
-  const all = [...best.values()];
+  const all = [...best.values()].map((m) => ({ ...m, tone: toned.get(m.taskId)?.tone }));
   return {
     recognized: all.filter((m) => m.score >= RECOGNIZED_MIN),
     uncertain: all.filter((m) => m.score < RECOGNIZED_MIN),
@@ -62,8 +67,10 @@ export function mergeOcrResults(results: OcrMatchResult[]): OcrMatchResult {
   };
 }
 
-/** Images tirées d'une vidéo, au plus (le relais en garde 30 par session, photos comprises). */
-export const VIDEO_MAX_FRAMES = 24;
+/** Photos gardées par le relais pour une session (LIMITS.maxPhotos de server/phone.mjs). */
+export const PHONE_MAX_PHOTOS = 100;
+/** Images tirées d'une vidéo, au plus : 1 min 30 à une image par seconde. */
+export const VIDEO_MAX_FRAMES = 90;
 /** Écart entre deux images candidates d'une vidéo (s). */
 export const VIDEO_STEP = 0.2;
 
@@ -92,11 +99,12 @@ const meanDiff = (a: Uint8ClampedArray, b: Uint8ClampedArray) => {
 };
 
 /**
- * Instants à garder d'une vidéo de la liste qui défile : la plus nette de chaque tranche (durée / max, 0,6 s
- * au moins), sauf si elle ressemble à la précédente gardée (liste arrêtée : même écran).
+ * Instants à garder d'une vidéo de la liste qui défile : la plus nette de chaque tranche (0,6 s jusqu'à 15 s de
+ * vidéo, 1 s au-delà, plus si la vidéo dépasse `max` secondes), sauf si elle ressemble à la précédente gardée
+ * (liste arrêtée : même écran).
  */
 export function pickFrames(samples: FrameSample[], duration: number, max = VIDEO_MAX_FRAMES, minDiff = 4): number[] {
-  const slot = Math.max(0.6, duration / max);
+  const slot = Math.max(duration <= 15 ? 0.6 : 1, duration / max);
   const best = new Map<number, FrameSample>();
   for (const f of samples) {
     const k = Math.floor(f.t / slot);

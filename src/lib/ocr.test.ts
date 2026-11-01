@@ -30,6 +30,8 @@ describe("fond d'une ligne (tâches d'un marchand)", () => {
     expect(toneOf(px([32, 23, 9]))).toBe("brown");
     expect(toneOf(px([21, 23, 22]))).toBe("grey");
     expect(toneOf(px([1, 2, 1]))).toBeUndefined();
+    // quête sélectionnée : fond blanc-beige, lettres sombres
+    expect(toneOf(new Uint8ClampedArray([225, 218, 200, 255, 225, 218, 200, 255, 30, 30, 30, 255]))).toBeUndefined();
     // filmé au téléphone
     expect(toneOf(px([40, 140, 200]))).toBe("blue");
     expect(toneOf(px([220, 130, 40]))).toBe("brown");

@@ -72,6 +72,14 @@ describe("mergeOcrResults", () => {
   });
 });
 
+describe("fond d'une quête sur plusieurs images", () => {
+  it("sélectionnée (sans fond) sur une image : couleur prise sur une autre", () => {
+    const one = (score: number, tone?: OcrMatch["tone"]): OcrMatchResult => ({ recognized: [{ ...m("q", score), tone }], uncertain: [], unmatched: [] });
+    expect(mergeOcrResults([one(0.99), one(0.9, "blue")]).recognized[0]).toMatchObject({ score: 0.99, tone: "blue" });
+    expect(mergeOcrResults([one(0.99), one(0.95)]).recognized[0].tone).toBeUndefined();
+  });
+});
+
 describe("images d'une vidéo", () => {
   const flat = (v: number) => new Uint8ClampedArray(16).fill(v);
   it("netteté : un damier est plus net qu'une image unie", () => {
@@ -83,5 +91,12 @@ describe("images d'une vidéo", () => {
     // tranches de 1 s (durée 4 s, 4 images au plus) ; de 2 à 3 s la liste ne bouge plus
     const samples = [f(0.1, 1, 10), f(0.5, 5, 20), f(1.2, 3, 60), f(1.8, 2, 70), f(2.4, 9, 61), f(3.5, 4, 120)];
     expect(pickFrames(samples, 4, 4)).toEqual([0.5, 1.2, 3.5]);
+  });
+  it("0,6 s par image jusqu'à 15 s de vidéo, 1 s au-delà", () => {
+    // une image différente toutes les 0,2 s
+    const run = (duration: number) => Array.from({ length: duration * 5 }, (_, i) => ({ t: i / 5 + 0.1, sharp: 1, gray: flat((i * 10) % 250) }));
+    expect(pickFrames(run(12), 12, 90)).toHaveLength(20);
+    expect(pickFrames(run(60), 60, 90)).toHaveLength(60);
+    expect(pickFrames(run(180), 180, 90)).toHaveLength(90);
   });
 });

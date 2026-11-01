@@ -22,7 +22,7 @@ export type Tone = "blue" | "brown" | "grey";
  * Couleur du fond sous une ligne (pixels RGBA) : les lettres claires sont écartées. Mesuré sur le menu
  * Tâches d'un marchand : bleu (14, 24, 29), brun (32, 23, 9) sur capture ; filmés au téléphone, bien plus vifs
  * (bleu clair, orange). Gris (21, 23, 22) : quête ratée, mais aussi fond du menu Personnage (voir CaptureTab) ;
- * noir (titres de section) : rien.
+ * noir (titres de section) : rien. Fond clair (quête sélectionnée, blanc-beige, texte sombre) : rien non plus.
  */
 export function toneOf(px: Uint8ClampedArray): Tone | undefined {
   let diff = 0;
@@ -34,7 +34,8 @@ export function toneOf(px: Uint8ClampedArray): Tone | undefined {
     sum += px[i] + px[i + 1] + px[i + 2];
     n++;
   }
-  if (!n) return undefined;
+  // plus de la moitié de pixels clairs : c'est le fond, pas des lettres (quête sélectionnée)
+  if (n * 2 < px.length / 4) return undefined;
   return diff / n > 8 ? "blue" : diff / n < -8 ? "brown" : sum / n / 3 >= 10 ? "grey" : undefined;
 }
 

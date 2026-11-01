@@ -2,7 +2,7 @@
 // Rien n'est stocké sur le téléphone (ni localStorage ni état de l'appli) ; les photos ne font que transiter par le relais.
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { tr } from "../lib/i18n";
-import { downscaleSize, pickFrames, sharpness, VIDEO_MAX_FRAMES, VIDEO_STEP, type FrameSample } from "../lib/phoneCapture";
+import { downscaleSize, pickFrames, PHONE_MAX_PHOTOS, sharpness, VIDEO_MAX_FRAMES, VIDEO_STEP, type FrameSample } from "../lib/phoneCapture";
 
 interface Photo {
   id: string;
@@ -93,7 +93,7 @@ async function videoFrames(file: Blob, max: number, onProgress: (p: number) => v
 
 const HTTP_ERRORS: Record<number, [string, string]> = {
   404: ["Session expirée : rouvre le QR code sur le PC.", "Session expired: open the QR code on the PC again."],
-  409: ["Trop de photos (30 au plus) ou déjà envoyé.", "Too many photos (30 at most) or already sent."],
+  409: [`Trop de photos (${PHONE_MAX_PHOTOS} au plus) ou déjà envoyé.`, `Too many photos (${PHONE_MAX_PHOTOS} at most) or already sent.`],
   413: ["Photo trop lourde.", "Photo too large."],
   429: ["Trop de requêtes, réessaie dans une minute.", "Too many requests, try again in a minute."],
   503: ["Serveur saturé, réessaie dans une minute.", "Server busy, try again in a minute."],
@@ -129,7 +129,7 @@ export function PhonePage({ code }: { code: string }) {
     setError(null);
     try {
       if (isVideo) {
-        const room = Math.min(VIDEO_MAX_FRAMES, 30 - photos.length);
+        const room = Math.min(VIDEO_MAX_FRAMES, PHONE_MAX_PHOTOS - photos.length);
         const frames = await videoFrames(file, room, (p) => setBusy(tr(`Découpage de la vidéo… ${Math.round(p * 100)} %`, `Cutting the video… ${Math.round(p * 100)}%`)));
         for (const [i, frame] of frames.entries()) {
           setBusy(tr(`Envoi ${i + 1}/${frames.length}…`, `Sending ${i + 1}/${frames.length}…`));
