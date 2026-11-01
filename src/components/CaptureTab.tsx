@@ -77,15 +77,18 @@ export function CaptureTab({ tasks, pasted, onApply, onStatus }: Props) {
           lines.map((l) => (l.tone ? l.text.replace(/^(\S{1,2} ){1,2}/, "") : l.text)),
           tasks,
         );
-        const matched = [...r.recognized, ...r.uncertain].map((m) => lines[m.lineIndexes[0]].tone);
-        const colored = matched.filter((t) => t === "blue" || t === "brown").length;
-        // les fonds ne disent rien hors de la liste d'un marchand (au moins 2 quêtes, la moitié, en bleu ou brun) :
-        // le menu Personnage > Tâches a des fonds gris, et une photo d'écran teinte une ligne au hasard
-        const trader = colored >= 2 && colored * 2 >= matched.length;
-        const withTone = (m: OcrMatch) => ({ ...m, tone: trader ? lines[m.lineIndexes[0]].tone : undefined });
+        const withTone = (m: OcrMatch) => ({ ...m, tone: lines[m.lineIndexes[0]].tone });
         results.push({ ...r, recognized: r.recognized.map(withTone), uncertain: r.uncertain.map(withTone) });
       }
-      const result = mergeOcrResults(results);
+      const merged = mergeOcrResults(results);
+      // les fonds ne disent rien hors de la liste d'un marchand (au moins 2 quêtes, la moitié, en bleu ou brun,
+      // sur l'ensemble des photos : une image de la vidéo peut n'avoir que des grises) : le menu Personnage >
+      // Tâches a des fonds gris, et une photo d'écran teinte une ligne au hasard
+      const all = [...merged.recognized, ...merged.uncertain];
+      const colored = all.filter((m) => m.tone === "blue" || m.tone === "brown").length;
+      const trader = colored >= 2 && colored * 2 >= all.length;
+      const plain = (m: OcrMatch) => ({ ...m, tone: undefined });
+      const result = trader ? merged : { ...merged, recognized: merged.recognized.map(plain), uncertain: merged.uncertain.map(plain) };
       // gris : ratée ou pas encore acceptée, impossible à dire sur l'image : à cocher soi-même
       setChecked(new Set(result.recognized.filter((m) => m.tone !== "grey").map((m) => m.taskId)));
       setAdded([]);
