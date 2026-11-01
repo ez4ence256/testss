@@ -416,9 +416,10 @@ export default function App() {
   useEffect(() => setChainNotice(null), [gameMode]);
   /**
    * Une seule action : coche les objectifs des quêtes `complete`, marque `fail` échouées, les sort de la sélection.
-   * `replace` : la sélection est remplacée (rien à retirer ni à rétablir). Retourne rien si rien ne change.
+   * `replace` : la sélection est remplacée (rien à retirer ni à rétablir). `added` : quêtes qu'« Annuler » retire
+   * aussi (cochée par mégarde dans la recherche). Retourne rien si rien ne change.
    */
-  const applyGrey = (complete: string[], fail: string[], text: (k: number, f: number) => string, replace = false) => {
+  const applyGrey = (complete: string[], fail: string[], text: (k: number, f: number) => string, replace = false, added: string[] = []) => {
     const ticks = complete.flatMap((id) => (tasksById.get(id)?.objectives ?? []).filter((o) => !mode.done[o.id]).map((o) => o.id));
     const newFail = fail.filter((id) => !failed[id]);
     const sel = new Set(replace ? [] : mode.selected.map((s) => s.taskId));
@@ -428,12 +429,12 @@ export default function App() {
     dispatch({ type: "applyQuestStatus", done: ticks, failed: newFail, deselect });
     setChainNotice({
       text: text(complete.length, newFail.length),
-      undo: () => dispatch({ type: "applyQuestStatus", done: [], undone: ticks, failed: [], unfailed: newFail, select: deselect }),
+      undo: () => dispatch({ type: "applyQuestStatus", done: [], undone: ticks, failed: [], unfailed: newFail, select: deselect, deselect: added }),
     });
   };
   // Grise les prérequis des quêtes qu'on vient d'activer. Actions locales seulement (jamais au chargement,
   // à l'import ni à la réception d'un instantané de la room).
-  const greyPrerequisites = (added: Task[], replace = false) => {
+  const greyPrerequisites = (added: Task[], replace = false, removeOnUndo = false) => {
     const addedIds = new Set(added.map((t) => t.id));
     const complete = new Set<string>();
     const fail = new Set<string>();
@@ -453,17 +454,18 @@ export default function App() {
       [...fail],
       (k, f) =>
         tr(
-          `${who} : tu y as accès, donc les ${k + f} quête(s) qui la débloquent sont grisée(s) automatiquement (${k} terminée(s)${f ? `, ${f} échouée(s)` : ""}). Une seule activation suffit pour toute la chaîne.`,
-          `${whoEn}: you have access to it, so the ${k + f} quest(s) that unlock it are greyed out automatically (${k} completed${f ? `, ${f} failed` : ""}). One activation covers the whole chain.`,
+          `${who} : tu y as accès, donc les ${k + f} quête(s) qui la débloquent sont grisée(s) automatiquement (${k} terminée(s)${f ? `, ${f} échouée(s)` : ""}). Une seule activation suffit pour toute la chaîne.${removeOnUndo ? " « Annuler » retire aussi la quête." : ""}`,
+          `${whoEn}: you have access to it, so the ${k + f} quest(s) that unlock it are greyed out automatically (${k} completed${f ? `, ${f} failed` : ""}). One activation covers the whole chain.${removeOnUndo ? ' "Undo" also removes the quest.' : ""}`,
         ),
       replace,
+      removeOnUndo ? added.map((t) => t.id) : [],
     );
   };
   const toggleTask = (taskId: string) => {
     const adding = !mode.selected.some((s) => s.taskId === taskId);
     dispatch({ type: "toggleTask", taskId });
     const task = tasksById.get(taskId);
-    if (task && adding) greyPrerequisites([task]);
+    if (task && adding) greyPrerequisites([task], false, true);
     if (!task || !adding || !currentMap) return;
     const shown = { objectives: shownObjectives(task, mode.done, false, oneAtATime) };
     const target = dominantMap([shown], 0);

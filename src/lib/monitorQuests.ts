@@ -1,5 +1,6 @@
 // Événements de quêtes du Monitor regroupés en UNE action (applyQuestStatus). Fonction pure : l'appelant dispatche.
-// started -> sélection + prérequis grisés ; finished -> comme « terminer » (cases cochées, branches échouées) ; failed -> échouée.
+// started -> sélection + prérequis grisés ; finished -> comme « terminer » (cases cochées, branches échouées) et prérequis
+// grisés (The Punisher - Partie 6 terminée : parties 1 à 5 aussi) ; failed -> échouée.
 
 import type { GameMode, Task } from "../types";
 import type { MonitorEvent } from "../api/monitor";
@@ -37,7 +38,7 @@ export function planMonitorBatch(
   const branch = branchFailures(F, ctx.tasks, ctx.done, ctx.failed, new Set(F));
   const pc = new Set<string>();
   const pf = new Set<string>();
-  for (const id of S) {
+  for (const id of [...S, ...F]) {
     const c = prerequisiteChanges(id, ctx.tasks, ctx.done, ctx.failed);
     c.complete.forEach((r) => pc.add(r));
     c.failed.forEach((r) => pf.add(r));

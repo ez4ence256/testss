@@ -15,9 +15,10 @@ describe("planMonitorBatch", () => {
     expect(p.counts).toMatchObject({ started: 1, prereq: 1 });
     expect(p.undo?.undone).toEqual(["ao1", "ao2"]);
   });
-  it("finished : coche, désélectionne et échoue les branches ; le dernier statut gagne", () => {
-    const p = planMonitorBatch([ev("b", "started"), ev("b", "finished")], { ...ctx, selected: ["b"] });
-    expect(p.action).toEqual({ done: ["bo1", "bo2"], failed: ["c"], deselect: ["b"], select: [] });
+  it("finished : coche, grise les prérequis, désélectionne et échoue les branches ; le dernier statut gagne", () => {
+    const p = planMonitorBatch([ev("b", "started"), ev("b", "finished")], { ...ctx, selected: ["a", "b"] });
+    expect(p.action).toEqual({ done: ["bo1", "bo2", "ao1", "ao2"], failed: ["c"], deselect: ["b", "a"], select: [] });
+    expect(p.counts).toMatchObject({ finished: 1, prereq: 1 });
   });
   it("failed : marque échouée et désélectionne", () => {
     expect(planMonitorBatch([ev("d", "failed")], { ...ctx, selected: ["d"] }).action).toMatchObject({ failed: ["d"], deselect: ["d"] });
