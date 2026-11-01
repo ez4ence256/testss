@@ -88,7 +88,10 @@ export function QuestList({ tasks, traders, maps, mode, onToggle, onOpen, onPhot
     return mode.selected.filter((s) => byId.has(s.taskId) && !shown.has(s.taskId)).map((s) => byId.get(s.taskId)!);
   }, [pinned, tasks, mode.selected]);
   const hiddenCount = hiddenSelected - ghostIds.length;
+  // pendant une recherche : pas de bloc « Quêtes sélectionnées » vide, ni la liste des masquées (presque toutes)
+  const searching = Boolean(query.trim());
   const selectedCount = mode.selected.length + storySelected.length;
+  const showPinned = selectedCount > 0 && !(searching && pinned.length === 0);
 
   const renderStoryRow = (r: StoryResult) => {
     const id = r.chapter.id;
@@ -272,7 +275,7 @@ export function QuestList({ tasks, traders, maps, mode, onToggle, onOpen, onPhot
         </p>
       )}
 
-      {selectedCount > 0 && (
+      {showPinned && (
         <section className="pinned" aria-label={tr("Quêtes sélectionnées", "Selected quests")}>
           <div className="pinned-head">
             <span className="subhead">{tr(`Quêtes sélectionnées (${pinned.length})`, `Selected quests (${pinned.length})`)}</span>
@@ -286,10 +289,10 @@ export function QuestList({ tasks, traders, maps, mode, onToggle, onOpen, onPhot
                 `${hiddenCount} autre${hiddenCount > 1 ? "s" : ""} quête${hiddenCount > 1 ? "s" : ""} sélectionnée${hiddenCount > 1 ? "s" : ""}, masquée${hiddenCount > 1 ? "s" : ""} par la recherche ou les filtres`,
                 `${hiddenCount} other selected quest${hiddenCount > 1 ? "s" : ""} hidden by the search or filters`,
               )}
-              {hiddenNames.length > 0 ? ` : ${hiddenNames.join(", ")}.` : "."}
+              {!searching && hiddenNames.length > 0 && hiddenNames.length <= 5 ? ` : ${hiddenNames.join(", ")}.` : "."}
             </p>
           )}
-          {ghostIds.length > 0 && onRemoveGhosts && (
+          {!searching && ghostIds.length > 0 && onRemoveGhosts && (
             <p className="muted small">
               {tr(`Quête${ghostIds.length > 1 ? "s" : ""} qui n'existe${ghostIds.length > 1 ? "nt" : ""} plus sur le site : `, `Quest${ghostIds.length > 1 ? "s" : ""} no longer on the site: `)}
               {ghostIds.map(ghostName).join(", ")}{" "}
@@ -302,7 +305,7 @@ export function QuestList({ tasks, traders, maps, mode, onToggle, onOpen, onPhot
         </section>
       )}
 
-      {selectedCount > 0 && others.length > 0 && <div className="subhead">{tr(`Autres quêtes (${others.length})`, `Other quests (${others.length})`)}</div>}
+      {showPinned && others.length > 0 && <div className="subhead">{tr(`Autres quêtes (${others.length})`, `Other quests (${others.length})`)}</div>}
       <ul className="quest-list">{others.map(renderRow)}</ul>
     </div>
   );
