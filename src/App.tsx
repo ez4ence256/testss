@@ -34,7 +34,7 @@ import { planMonitorBatch } from "./lib/monitorQuests";
 import { branchFailures, prerequisiteChanges } from "./lib/questChain";
 import { computeNeeds } from "./lib/itemNeeds";
 import { loadHideout, type HideoutStation } from "./api/itemList";
-import { buildEventTasks, loadEventEntries, type EventEntry } from "./api/eventQuests";
+import { buildEventTasks, loadEventEntries, wikiMigration, type EventEntry } from "./api/eventQuests";
 import { RoomControl } from "./components/RoomControl";
 import { LegacyRoomPrompt } from "./components/LegacyRoomPrompt";
 import { TeammatePanel } from "./components/TeammatePanel";
@@ -184,10 +184,22 @@ export default function App() {
   const data = load.data;
   // Quêtes d'événement du wiki absentes de tarkov.dev : chargées une fois les données prêtes, sans bloquer l'app
   const [eventEntries, setEventEntries] = useState<EventEntry[]>([]);
+  // la liste du wiki a fini de charger : avant, un id wiki-… sélectionné n'est pas encore un fantôme ;
+  // en échec, les wiki-… ne le sont jamais (« Retirer » ferait perdre leur progression)
+  const [eventsSettled, setEventsSettled] = useState<"ok" | "failed" | null>(null);
   const dataReady = Boolean(data);
   useEffect(() => {
     if (!dataReady) return;
-    loadEventEntries().then(setEventEntries, (e) => console.warn("Quêtes d'événement du wiki indisponibles :", e));
+    loadEventEntries().then(
+      (entries) => {
+        setEventEntries(entries);
+        setEventsSettled("ok");
+      },
+      (e) => {
+        console.warn("Quêtes d'événement du wiki indisponibles :", e);
+        setEventsSettled("failed");
+      },
+    );
   }, [dataReady]);
   const tasks = useMemo(() => (data ? [...data.tasks, ...buildEventTasks(eventEntries, data)] : []), [data, eventEntries]);
   const maps = useMemo(() => data?.maps ?? [], [data]);
@@ -414,6 +426,23 @@ export default function App() {
   // information avec « Annuler » après un grisage automatique (prérequis, branches exclusives)
   const [chainNotice, setChainNotice] = useState<{ text: string; undo?: () => void } | null>(null);
   useEffect(() => setChainNotice(null), [gameMode]);
+  // tarkov.dev vient d'ajouter une quête qu'on lisait sur le wiki : sélection, échec et cases cochées passent au vrai id
+  useEffect(() => {
+    if (!data) return;
+    const mig = wikiMigration(mode, data.tasks);
+    if (!mig) return;
+    dispatch({ type: "renameIds", ...mig });
+    const n = Object.keys(mig.tasks).length;
+    setChainNotice({ text: tr(`${n} quête(s) du wiki maintenant dans tarkov.dev : progression reprise.`, `${n} wiki quest(s) now in tarkov.dev: progress carried over.`) });
+  }, [data, gameMode, mode]);
+  // sélectionnées mais absentes des données (quête retirée du site) : proposées au retrait, jamais retirées seules
+  const ghostIds = useMemo(
+    () =>
+      dataReady && eventsSettled
+        ? mode.selected.map((s) => s.taskId).filter((id) => !tasksById.has(id) && (eventsSettled === "ok" || !id.startsWith("wiki-")))
+        : [],
+    [dataReady, eventsSettled, mode.selected, tasksById],
+  );
   /**
    * Une seule action : coche les objectifs des quêtes `complete`, marque `fail` échouées, les sort de la sélection.
    * `replace` : la sélection est remplacée (rien à retirer ni à rétablir). `added` : quêtes qu'« Annuler » retire
@@ -496,9 +525,9 @@ export default function App() {
   const monitorTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const flushMonitor = useRef(() => {});
   useEffect(() => () => clearTimeout(monitorTimer.current), []);
-  const applyMonitor = (events: Extract<MonitorEvent, { type: "task" }>[], prefix: string, reopen = false) => {
+  const applyMonitor = (events: Extract<MonitorEvent, { type: "task" }>[], prefix: string, reopen = false, replace = false) => {
     if (!gameMode || !events.length) return;
-    const plan = planMonitorBatch(events, { gameMode, tasks, done: mode.done, failed, selected: mode.selected.map((s) => s.taskId), reopen });
+    const plan = planMonitorBatch(events, { gameMode, tasks, done: mode.done, failed, selected: mode.selected.map((s) => s.taskId), reopen, replace });
     const c = plan.counts;
     const modeName = (m: string) => (m === "regular" ? "PvP" : m === "pve" ? "PvE" : tr("PvP Saison", "PvP Season"));
     const other = events.find((e) => e.gameMode !== gameMode);
@@ -508,6 +537,7 @@ export default function App() {
       c.finished && tr(`${c.finished} terminée(s)`, `${c.finished} completed`),
       c.failed && tr(`${c.failed} échouée(s)`, `${c.failed} failed`),
       c.prereq && tr(`${c.prereq} prérequis grisé(s)`, `${c.prereq} prerequisite(s) greyed out`),
+      c.removed && tr(`${c.removed} retirée(s) de la sélection`, `${c.removed} removed from selection`),
       c.branch && tr(`${c.branch} branche(s) exclusive(s) échouée(s)`, `${c.branch} exclusive branch quest(s) failed`),
       other && tr(`événement ${modeName(other.gameMode)} ignoré (le site affiche ${modeName(gameMode)})`, `${modeName(other.gameMode)} event ignored (the site shows ${modeName(gameMode)})`),
     ].filter(Boolean);
@@ -788,6 +818,8 @@ export default function App() {
               onOnlyMine={setOnlyMine}
               kappaOnly={kappaOnly}
               onKappaOnly={setKappaOnly}
+              ghostIds={ghostIds}
+              onRemoveGhosts={() => dispatch({ type: "applyQuestStatus", done: [], failed: [], deselect: ghostIds })}
             />
           )}
           {data && tab === "selection" && (
@@ -852,7 +884,8 @@ export default function App() {
             <CaptureTab
               tasks={tasks}
               pasted={pastedImage}
-              onApply={(finished, started, failed) => {
+              selectedIds={mode.selected.map((s) => s.taskId)}
+              onApply={(finished, started, failed, replace) => {
                 // nouvelles quêtes en cours seulement (les déjà sélectionnées ne bougent pas) : pour choisir la map
                 const added = started.filter((id) => !mode.selected.some((s) => s.taskId === id)).map((id) => tasksById.get(id)).filter((t): t is Task => Boolean(t));
                 applyMonitor(
@@ -863,6 +896,7 @@ export default function App() {
                   ].map((t) => ({ type: "task" as const, ...t, gameMode: gameMode!, at: Date.now() })),
                   tr("Capture", "Screenshot"),
                   true,
+                  replace,
                 );
                 const mapId = dominantMap(added);
                 if (!mapId || !maps.some((m) => m.id === mapId)) return null;

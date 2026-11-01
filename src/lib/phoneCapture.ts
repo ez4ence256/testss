@@ -1,6 +1,6 @@
 // Capture par téléphone : aides pures (code, adresse du PC, taille des photos, fusion des lectures OCR).
 // Le relais serveur est dans server/phone.mjs.
-import { RECOGNIZED_MIN, type OcrMatch, type OcrMatchResult } from "./ocrMatch";
+import { RECOGNIZED_MIN, normalizeOcr, type OcrMatch, type OcrMatchResult } from "./ocrMatch";
 
 export const PHONE_CODE = /^[A-Za-z0-9]{24}$/;
 export const PHONE_ORIGIN_KEY = "tqp:phoneOrigin";
@@ -50,7 +50,16 @@ export const phoneUrl = (origin: string, code: string) => `${origin}/?phone=${co
  * sa couleur sur une autre.
  */
 export function mergeOcrResults(results: OcrMatchResult[]): OcrMatchResult {
-  if (results.length === 1) return results[0];
+  // noms inconnus : sans doublon (casse ignorée), sans ceux qui sont (ou contiennent) le texte d'une quête reconnue
+  const known = results.flatMap((r) => [...r.recognized, ...r.uncertain]).map((m) => normalizeOcr(m.text)).filter(Boolean);
+  const seen = new Set<string>();
+  const unknown = results.flatMap((r) => r.unknown ?? []).filter((u) => {
+    const n = normalizeOcr(u);
+    if (!n || seen.has(n) || known.some((k) => n.includes(k) || k.includes(n))) return false;
+    seen.add(n);
+    return true;
+  });
+  if (results.length === 1) return { ...results[0], unknown };
   const best = new Map<string, OcrMatch>();
   const toned = new Map<string, OcrMatch>();
   for (const m of results.flatMap((r) => [...r.recognized, ...r.uncertain])) {
@@ -64,6 +73,7 @@ export function mergeOcrResults(results: OcrMatchResult[]): OcrMatchResult {
     recognized: all.filter((m) => m.score >= RECOGNIZED_MIN),
     uncertain: all.filter((m) => m.score < RECOGNIZED_MIN),
     unmatched: results.flatMap((r) => r.unmatched),
+    unknown,
   };
 }
 

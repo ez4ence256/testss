@@ -53,7 +53,12 @@ describe("adresse du PC", () => {
 describe("mergeOcrResults", () => {
   it("une seule photo : résultat inchangé", () => {
     const r = res([m("a", 0.95)]);
-    expect(mergeOcrResults([r])).toBe(r);
+    expect(mergeOcrResults([r])).toEqual({ ...r, unknown: [] });
+  });
+  it("noms inconnus : sans doublon, sans les quêtes reconnues", () => {
+    const a = { ...res([m("a", 0.95, "Chumming")]), unknown: ["New Quest", "Chumming Part"] };
+    const b = { ...res([]), unknown: ["new quest", "Other One"] };
+    expect(mergeOcrResults([a, b]).unknown).toEqual(["New Quest", "Other One"]);
   });
   it("dédoublonne par quête en gardant le meilleur score", () => {
     const out = mergeOcrResults([res([m("a", 0.9, "vieux")], [m("b", 0.75)]), res([m("a", 0.97, "net")], [], ["bruit"])]);

@@ -39,9 +39,14 @@ interface Props {
   /** « Kappa seulement » : partagé avec Mes quêtes et la carte. */
   kappaOnly: boolean;
   onKappaOnly: (value: boolean) => void;
+  /** Quêtes sélectionnées qui n'existent plus dans les données (jamais retirées toutes seules). */
+  ghostIds?: string[];
+  onRemoveGhosts?: () => void;
 }
 
-export function QuestList({ tasks, traders, maps, mode, onToggle, onOpen, onPhotos, onClearSelection, onShowMap, onToggleStory, onOpenStory, onlyMine, onOnlyMine, kappaOnly, onKappaOnly }: Props) {
+const ghostName = (id: string) => (id.startsWith("wiki-") ? id.slice(5).replace(/-/g, " ") : tr(`quête retirée du site (id ${id.slice(0, 8)}…)`, `quest removed from the site (id ${id.slice(0, 8)}…)`));
+
+export function QuestList({ tasks, traders, maps, mode, onToggle, onOpen, onPhotos, onClearSelection, onShowMap, onToggleStory, onOpenStory, onlyMine, onOnlyMine, kappaOnly, onKappaOnly, ghostIds = [], onRemoveGhosts }: Props) {
   const [query, setQuery] = useState("");
   const [trader, setTrader] = useState("");
   const [mapFilter, setMapFilter] = useState("");
@@ -76,6 +81,13 @@ export function QuestList({ tasks, traders, maps, mode, onToggle, onOpen, onPhot
     [mode.selected, storySelected, storyChapters.chapters],
   );
   const { pinned, others, hiddenSelected } = useMemo(() => pinSelected(rows, selectedKeys), [rows, selectedKeys]);
+  // quêtes sélectionnées masquées par la recherche ou les filtres (les fantômes ont leur propre ligne)
+  const hiddenNames = useMemo(() => {
+    const shown = new Set(pinned.map((r) => ("task" in r ? r.task.id : "")));
+    const byId = new Map(tasks.map((t) => [t.id, t.name]));
+    return mode.selected.filter((s) => byId.has(s.taskId) && !shown.has(s.taskId)).map((s) => byId.get(s.taskId)!);
+  }, [pinned, tasks, mode.selected]);
+  const hiddenCount = hiddenSelected - ghostIds.length;
   const selectedCount = mode.selected.length + storySelected.length;
 
   const renderStoryRow = (r: StoryResult) => {
@@ -268,12 +280,22 @@ export function QuestList({ tasks, traders, maps, mode, onToggle, onOpen, onPhot
               {tr("Tout désélectionner", "Deselect all")}
             </button>
           </div>
-          {hiddenSelected > 0 && (
+          {hiddenCount > 0 && (
             <p className="muted small">
               {tr(
-                `${hiddenSelected} autre${hiddenSelected > 1 ? "s" : ""} quête${hiddenSelected > 1 ? "s" : ""} sélectionnée${hiddenSelected > 1 ? "s" : ""}, masquée${hiddenSelected > 1 ? "s" : ""} par la recherche ou les filtres.`,
-                `${hiddenSelected} other selected quest${hiddenSelected > 1 ? "s" : ""} hidden by the search or filters.`,
+                `${hiddenCount} autre${hiddenCount > 1 ? "s" : ""} quête${hiddenCount > 1 ? "s" : ""} sélectionnée${hiddenCount > 1 ? "s" : ""}, masquée${hiddenCount > 1 ? "s" : ""} par la recherche ou les filtres`,
+                `${hiddenCount} other selected quest${hiddenCount > 1 ? "s" : ""} hidden by the search or filters`,
               )}
+              {hiddenNames.length > 0 ? ` : ${hiddenNames.join(", ")}.` : "."}
+            </p>
+          )}
+          {ghostIds.length > 0 && onRemoveGhosts && (
+            <p className="muted small">
+              {tr(`Quête${ghostIds.length > 1 ? "s" : ""} qui n'existe${ghostIds.length > 1 ? "nt" : ""} plus sur le site : `, `Quest${ghostIds.length > 1 ? "s" : ""} no longer on the site: `)}
+              {ghostIds.map(ghostName).join(", ")}{" "}
+              <button className="btn btn-small" onClick={onRemoveGhosts}>
+                {tr("Retirer", "Remove")}
+              </button>
             </p>
           )}
           <ul className="quest-list">{pinned.map(renderRow)}</ul>

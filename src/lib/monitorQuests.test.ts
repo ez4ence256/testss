@@ -45,6 +45,14 @@ describe("planMonitorBatch", () => {
     expect(p.undo).toMatchObject({ done: ["ao1", "ao2"], failed: ["d"], deselect: ["a", "d"] });
     expect(p.counts).toMatchObject({ started: 0, reopened: 2 });
   });
+  it("replace : désélectionne ce qui n'est pas vu en cours (fantôme compris), garde les autres", () => {
+    const p = planMonitorBatch([ev("a", "started"), ev("d", "started")], { ...ctx, selected: ["a", "b", "ghost"], replace: true });
+    expect(p.action).toMatchObject({ select: ["d"], deselect: ["b", "ghost"] });
+    expect(p.counts.removed).toBe(2);
+    expect(p.undo).toMatchObject({ select: ["b", "ghost"], deselect: ["d"] });
+    expect(planMonitorBatch([ev("a", "started")], { ...ctx, selected: ["a"], replace: true }).action).toBeNull();
+    expect(planMonitorBatch([ev("a", "started")], { ...ctx, selected: ["a", "b"] }).action).toBeNull();
+  });
   it("ignore autre mode et quêtes inconnues", () => {
     const p = planMonitorBatch([ev("d", "started", "regular" as never), ev("zz", "started")], ctx);
     expect(p.action).toBeNull();

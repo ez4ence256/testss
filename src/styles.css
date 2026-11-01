@@ -1045,6 +1045,11 @@ body.is-resizing {
 .capture-unmatched {
   margin-top: 0.6rem;
 }
+.capture-replace {
+  margin-top: 1.4rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--line);
+}
 .capture-message {
   margin-top: 0.6rem;
   padding: 0.5rem 0.65rem;

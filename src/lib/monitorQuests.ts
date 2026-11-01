@@ -12,14 +12,15 @@ export interface MonitorPlan {
   /** Arguments de applyQuestStatus ; undo = l'action inverse. */
   action: { done: string[]; undone: string[]; failed: string[]; unfailed: string[]; deselect: string[]; select: string[] } | null;
   undo: { done: string[]; undone: string[]; failed: string[]; unfailed: string[]; select: string[]; deselect: string[] } | null;
-  counts: { started: number; finished: number; failed: number; prereq: number; branch: number; ignored: number; reopened: number };
+  counts: { started: number; finished: number; failed: number; prereq: number; branch: number; ignored: number; reopened: number; removed: number };
 }
 
 export function planMonitorBatch(
   events: TaskEvent[],
   // reopen : une quête terminée ou ratée vue en cours est rouverte (capture : l'écran fait foi). Pas pour le Monitor :
-  // un vieux « started » des anciens logs rouvrirait une quête finie depuis
-  ctx: { gameMode: GameMode; tasks: Task[]; done: Record<string, number>; failed: Record<string, true>; selected: string[]; reopen?: boolean },
+  // un vieux « started » des anciens logs rouvrirait une quête finie depuis.
+  // replace : la sélection devient les quêtes vues en cours (les autres, même inconnues, sont seulement désélectionnées ; couleurs des gardées intactes)
+  ctx: { gameMode: GameMode; tasks: Task[]; done: Record<string, number>; failed: Record<string, true>; selected: string[]; reopen?: boolean; replace?: boolean },
 ): MonitorPlan {
   const byId = new Map(ctx.tasks.map((t) => [t.id, t]));
   const sel = new Set(ctx.selected);
@@ -54,7 +55,10 @@ export function planMonitorBatch(
   const newFail = [...new Set([...X, ...branch, ...pf])].filter((id) => !ctx.failed[id]);
   const startSet = new Set(S);
   const deselect = [...new Set([...F, ...X, ...branch, ...pc, ...pf])].filter((id) => sel.has(id) && !startSet.has(id));
-  const counts = { started: S.length - R.filter((id) => !sel.has(id)).length, finished: Fx.length, failed: X.length, prereq: pc.size + pf.size, branch: branch.length, ignored, reopened: R.length };
+  const startedIds = new Set(ids("started"));
+  const removedIds = ctx.replace ? ctx.selected.filter((id) => !startedIds.has(id) && !deselect.includes(id)) : [];
+  deselect.push(...removedIds);
+  const counts = { started: S.length - R.filter((id) => !sel.has(id)).length, finished: Fx.length, failed: X.length, prereq: pc.size + pf.size, branch: branch.length, ignored, reopened: R.length, removed: removedIds.length };
   if (!S.length && !ticks.size && !newFail.length && !deselect.length && !R.length) return { action: null, undo: null, counts };
   const done = [...ticks];
   return {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GameMap, Task, Trader } from "../types";
-import { buildEventTasks, eventSlug, loadEventEntries, parseEventQuest } from "./eventQuests";
+import { buildEventTasks, eventSlug, loadEventEntries, parseEventQuest, wikiMigration } from "./eventQuests";
 
 // Extrait réel (réduit) de la page « All-Inclusive Support » du wiki
 const ALL_INCLUSIVE = `{{Event content}}
@@ -146,5 +146,14 @@ describe("loadEventEntries", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
     await loadEventEntries();
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("wikiMigration", () => {
+  const real = { id: "real1", nameEn: "Debtor", wikiLink: "https://escapefromtarkov.fandom.com/wiki/Debtor", objectives: [{ id: "ro1" }, { id: "ro2" }] } as unknown as Task;
+  const mode = { selected: [{ taskId: "wiki-Debtor", color: 2 }], done: { "wiki-Debtor-1": 5, "wiki-Debtor-3": 6, other: 1 }, failed: {}, manual: {} };
+  it("mappe l'ancien id et les objectifs par rang (sans équivalent : supprimé), rejouable", () => {
+    expect(wikiMigration(mode, [real])).toEqual({ tasks: { "wiki-Debtor": "real1" }, objectives: { "wiki-Debtor-1": "ro1", "wiki-Debtor-3": "" } });
+    expect(wikiMigration({ ...mode, selected: [], done: {} }, [real])).toBeNull();
   });
 });

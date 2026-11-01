@@ -181,6 +181,8 @@ export type Action =
    * done/undone = objectifs à cocher/décocher, failed/unfailed = quêtes, select/deselect = sélection.
    */
   | { type: "applyQuestStatus"; done: string[]; undone?: string[]; failed: string[]; unfailed?: string[]; deselect?: string[]; select?: string[] }
+  /** Reprend la progression d'anciens ids (quêtes du wiki devenues tarkov.dev) : "" = supprimer la clé. */
+  | { type: "renameIds"; tasks: Record<string, string>; objectives: Record<string, string> }
   | { type: "import"; state: AppState }
   /** Remet à "pas fait" les objectifs donnés (une quête, retirée aussi des échouées si taskId), dans le mode courant seulement. */
   | { type: "resetProgress"; objectiveIds: string[]; taskId?: string }
@@ -310,6 +312,25 @@ export function reducer(state: AppState, action: Action): AppState {
         const selected = m.selected.filter((s) => !drop.has(s.taskId));
         for (const taskId of action.select ?? []) if (!selected.some((s) => s.taskId === taskId)) selected.push({ taskId, color: nextColor(selected) });
         return { ...m, done, failed, selected };
+      });
+    case "renameIds":
+      return updateMode(state, (m) => {
+        const rename = <V,>(rec: Record<string, V>, map: Record<string, string>) => {
+          const out: Record<string, V> = {};
+          for (const [k, v] of Object.entries(rec)) if (!(k in map)) out[k] = v;
+          for (const [k, v] of Object.entries(rec)) if (map[k]) out[map[k]] ??= v;
+          return out;
+        };
+        // le vrai id déjà sélectionné garde sa place et sa couleur : l'ancienne entrée tombe
+        const kept = new Set(m.selected.filter((s) => !action.tasks[s.taskId]).map((s) => s.taskId));
+        const selected = m.selected.flatMap((s) => (!action.tasks[s.taskId] ? [s] : kept.has(action.tasks[s.taskId]) ? [] : [{ ...s, taskId: action.tasks[s.taskId] }]));
+        return {
+          ...m,
+          selected,
+          done: rename(m.done, action.objectives),
+          manual: rename(m.manual, action.objectives),
+          ...(m.failed ? { failed: rename(m.failed, action.tasks) } : {}),
+        };
       });
     case "import":
       return { ...action.state, gameMode: state.gameMode };

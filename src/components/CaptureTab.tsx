@@ -7,11 +7,12 @@ import type { Task } from "../types";
 import { PhoneCapture } from "./PhoneCapture";
 import { isStaleBuildError, staleBuildMessage } from "../lib/staleBuild";
 import { mergeOcrResults } from "../lib/phoneCapture";
-import { matchOcrLines, offColumnLines, type OcrMatch, type OcrMatchResult } from "../lib/ocrMatch";
+import { buildCandidates, bestScore, matchOcrLines, nameColumn, unknownNames, type OcrMatch, type OcrMatchResult } from "../lib/ocrMatch";
 import type { OcrProgress, Tone } from "../lib/ocr";
 import { tr } from "../lib/i18n";
 import { UiIcon } from "./UiIcon";
 import { filterQuests } from "../lib/questFilter";
+import { ConfirmButton } from "./ConfirmButton";
 
 interface Props {
   /** Quêtes du mode actuel (seules candidates). */
@@ -23,7 +24,9 @@ interface Props {
    * (ajoutées si elles ne sont pas déjà sélectionnées ; la sélection actuelle reste). Renvoie le message
    * de map affichée, ou null.
    */
-  onApply: (finished: string[], started: string[], failed: string[]) => string | null;
+  onApply: (finished: string[], started: string[], failed: string[], replace: boolean) => string | null;
+  /** Quêtes actuellement sélectionnées (ids) : pour montrer ce que « Remplacer » retirerait. */
+  selectedIds?: string[];
 }
 
 type State =
@@ -44,7 +47,7 @@ const STATUS_LABELS: Record<string, [string, string]> = {
   "recognizing text": ["Lecture du texte…", "Reading the text…"],
 };
 
-export function CaptureTab({ tasks, pasted, onApply }: Props) {
+export function CaptureTab({ tasks, pasted, onApply, selectedIds }: Props) {
   const [state, setState] = useState<State>({ step: "idle" });
   const [preview, setPreview] = useState<string | null>(null);
   const [checked, setChecked] = useState<Set<string>>(new Set());
@@ -67,27 +70,31 @@ export function CaptureTab({ tasks, pasted, onApply }: Props) {
     });
     setState({ step: "reading", progress: null });
     try {
-      const { readImageLines } = await import("../lib/ocr");
+      const { readImageLines, readImagesLines } = await import("../lib/ocr");
       const results: OcrMatchResult[] = [];
-      for (const [i, blob] of blobs.entries()) {
-        const photo: [number, number] | undefined = blobs.length > 1 ? [i + 1, blobs.length] : undefined;
-        const lines = await readImageLines(blob, (progress) => setState({ step: "reading", progress, photo }), { whiteText: phone });
+      const candidates = buildCandidates(tasks); // une seule fois pour toutes les images et lignes
+      // lot : lecture en parallèle, progression = images lues / total ; une seule image : progression Tesseract
+      const batch = blobs.length > 1;
+      const allLines = batch
+        ? await readImagesLines(blobs, { whiteText: phone }, (done, total) =>
+            setState({ step: "reading", progress: { status: "recognizing text", progress: done / total }, photo: [done, total] }),
+          )
+        : [await readImageLines(blobs[0], (progress) => setState({ step: "reading", progress }), { whiteText: phone })];
+      for (const lines of allLines) {
         // liste d'un marchand : chaque ligne commence par l'icône de la quête (et la flèche des tâches
         // essentielles), lues « ES », « v @ »… Le texte entier reste s'il ressemble plus à une quête
         // (« No Swiping » perdait son « No »)
-        const score = (text: string) => {
-          const r = matchOcrLines([text], tasks);
-          return (r.recognized[0] ?? r.uncertain[0])?.score ?? 0;
-        };
+        const score = (text: string) => bestScore(text, candidates);
         const texts = lines.map((l) => {
           const stripped = l.tone ? l.text.replace(/^(\S{1,2} ){1,2}/, "") : l.text;
           return stripped !== l.text && score(l.text) > score(stripped) ? l.text : stripped;
         });
-        let r = matchOcrLines(texts, tasks);
-        const off = offColumnLines(r, lines);
-        if (off.size) r = matchOcrLines(texts.map((t, i) => (off.has(i) ? "" : t)), tasks);
+        let r = matchOcrLines(texts, tasks, candidates);
+        const col = nameColumn(r, lines);
+        if (col?.off.size) r = matchOcrLines(texts.map((t, i) => (col.off.has(i) ? "" : t)), tasks, candidates);
+        const unknown = col ? unknownNames(r, texts, col.inside) : [];
         const withTone = (m: OcrMatch) => ({ ...m, tone: lines[m.lineIndexes[0]].tone });
-        results.push({ ...r, recognized: r.recognized.map(withTone), uncertain: r.uncertain.map(withTone) });
+        results.push({ ...r, unknown, recognized: r.recognized.map(withTone), uncertain: r.uncertain.map(withTone) });
       }
       const merged = mergeOcrResults(results);
       // les fonds ne disent rien hors de la liste d'un marchand (au moins 2 quêtes, la moitié, en bleu ou brun,
@@ -167,6 +174,7 @@ export function CaptureTab({ tasks, pasted, onApply }: Props) {
   const toneIds = (tone: Tone) => toned.filter((m) => m.tone === tone && checked.has(m.taskId)).map((m) => m.taskId);
   const [finished, failed] = [toneIds("blue"), toneIds("grey")];
   const started = [...checked].filter((id) => !finished.includes(id) && !failed.includes(id));
+  const removed = selectedIds ? selectedIds.filter((id) => !started.includes(id)) : [];
   const counts = [
     started.length && tr(`${started.length} en cours`, `${started.length} in progress`),
     finished.length && tr(`${finished.length} terminée(s)`, `${finished.length} completed`),
@@ -302,7 +310,7 @@ export function CaptureTab({ tasks, pasted, onApply }: Props) {
                 <button
                   className="btn btn-primary"
                   onClick={() => {
-                    setMessage(onApply(finished, started, failed));
+                    setMessage(onApply(finished, started, failed, false));
                     setState({ step: "idle" });
                   }}
                 >
@@ -317,6 +325,13 @@ export function CaptureTab({ tasks, pasted, onApply }: Props) {
               </p>
             </>
           )}
+          {!!state.result.unknown?.length && (
+            <p className="muted small capture-unknown">
+              {tr(`Noms lus mais inconnus du site (${state.result.unknown.length}) : `, `Names read but unknown to the site (${state.result.unknown.length}): `)}
+              {state.result.unknown.map((u) => `« ${u} »`).join(", ")}
+              {tr(" — peut-être une quête trop récente pour tarkov.dev : envoie-moi le nom.", " — maybe a quest too recent for tarkov.dev: send me the name.")}
+            </p>
+          )}
           {state.result.unmatched.length > 0 && (
             <details className="capture-unmatched">
               <summary>{tr(`Lignes non reconnues (${state.result.unmatched.length})`, `Unrecognized lines (${state.result.unmatched.length})`)}</summary>
@@ -326,6 +341,27 @@ export function CaptureTab({ tasks, pasted, onApply }: Props) {
                 ))}
               </ul>
             </details>
+          )}
+          {checked.size > 0 && (
+            <div className="capture-replace">
+              <ConfirmButton
+                label={tr("Remplacer ma sélection par ces quêtes", "Replace my selection with these quests")}
+                question={tr("Désélectionner les autres quêtes ?", "Deselect the other quests?")}
+                confirmLabel={tr("Remplacer", "Replace")}
+                onConfirm={() => {
+                  setMessage(onApply(finished, started, failed, true));
+                  setState({ step: "idle" });
+                }}
+              />
+              <p className="muted small">
+                {tr(
+                  "Les quêtes actuellement sélectionnées qui ne sont pas dans cette capture sont désélectionnées (ni terminées ni ratées : juste retirées de la sélection). Utile après avoir filmé toute ta liste de quêtes actives. Les chapitres d'histoire ne sont pas touchés.",
+                  "Currently selected quests that are not in this capture are deselected (not completed, not failed: just removed from the selection). Useful after filming your whole list of active quests. Story chapters are not touched.",
+                )}
+                {removed.length > 0 &&
+                  " " + tr(`Retire ${removed.length} quête(s) de ta sélection : `, `Removes ${removed.length} quest(s) from your selection: `) + removed.map((id) => tasksById.get(id)?.name ?? id).join(", ") + "."}
+              </p>
+            </div>
           )}
         </>
       )}

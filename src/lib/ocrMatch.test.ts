@@ -2,7 +2,7 @@
 // lancée). Noms réels de l'API tarkov.dev (français et anglais).
 import { describe, expect, it } from "vitest";
 import type { Task } from "../types";
-import { UNCERTAIN_MIN, dominantMap, matchItemLines, matchOcrLines, normalizeOcr, numbersOf, offColumnLines, similarity } from "./ocrMatch";
+import { UNCERTAIN_MIN, dominantMap, matchItemLines, matchOcrLines, normalizeOcr, looksLikeName, nameColumn, numbersOf, offColumnLines, unknownNames, similarity } from "./ocrMatch";
 
 const t = (id: string, name: string, nameEn: string): Pick<Task, "id" | "name" | "nameEn"> => ({ id, name, nameEn });
 const TASKS = [
@@ -131,6 +131,31 @@ describe("rapprochement des lignes OCR", () => {
     expect(offColumnLines(matchOcrLines(two.map((l) => l.text), [...TASKS, t("res", "Réserve", "Reserve")]), two).size).toBe(0);
     const scattered = [{ text: "Chumming", x: 10, h: 16 }, { text: "Debut", x: 500, h: 16 }, { text: "First in Line", x: 990, h: 16 }];
     expect(offColumnLines(matchOcrLines(scattered.map((l) => l.text), TASKS), scattered).size).toBe(0);
+  });
+});
+
+describe("noms inconnus dans la colonne", () => {
+  const lines = [
+    { text: "Chumming", x: 100, h: 16 },
+    { text: "Debut", x: 102, h: 16 },
+    { text: "First in Line", x: 98, h: 16 },
+    { text: "A Brand New Quest", x: 101, h: 16 },
+    { text: "42 %", x: 100, h: 16 },
+    { text: "Reserve", x: 900, h: 16 },
+  ];
+  it("lignes de la colonne non utilisées qui ressemblent à un nom", () => {
+    const texts = lines.map((l) => l.text);
+    const r = matchOcrLines(texts, TASKS);
+    const col = nameColumn(r, lines)!;
+    expect([...col.inside]).toEqual([0, 1, 2, 3, 4]);
+    expect([...col.off]).toEqual([5]);
+    expect(unknownNames(r, texts, col.inside)).toEqual(["A Brand New Quest"]);
+  });
+  it("pas de colonne : null", () => {
+    expect(nameColumn(matchOcrLines(["Chumming"], TASKS), [{ x: 1, h: 16 }])).toBeNull();
+  });
+  it("forme d'un nom", () => {
+    expect([looksLikeName("A Familiar Face"), looksLikeName("Chumming"), looksLikeName("Go"), looksLikeName("12 345"), looksLikeName("42 %"), looksLikeName("ES"), looksLikeName("Type Class"), looksLikeName("Al BR"), looksLikeName("Swift Debtor")]).toEqual([true, true, false, false, false, false, false, false, true]);
   });
 });
 

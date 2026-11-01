@@ -53,21 +53,23 @@ export type Preprocess = "none" | "upscale" | "full";
 let workerPromise: Promise<Worker> | null = null;
 let onProgress: ((p: OcrProgress) => void) | null = null;
 
+function createTessWorker(): Promise<Worker> {
+  return import("tesseract.js").then(({ createWorker }) =>
+    // 1 = OEM.LSTM_ONLY (réseau de neurones, le plus précis)
+    createWorker(["fra", "eng"], 1, {
+      workerPath: workerUrl,
+      corePath: coreUrl,
+      logger: (m: { status: string; progress: number }) => onProgress?.({ status: m.status, progress: m.progress }),
+    }),
+  );
+}
+
 function getWorker(): Promise<Worker> {
   if (!workerPromise) {
-    workerPromise = import("tesseract.js")
-      .then(({ createWorker }) =>
-        // 1 = OEM.LSTM_ONLY (réseau de neurones, le plus précis)
-        createWorker(["fra", "eng"], 1, {
-          workerPath: workerUrl,
-          corePath: coreUrl,
-          logger: (m: { status: string; progress: number }) => onProgress?.({ status: m.status, progress: m.progress }),
-        }),
-      )
-      .catch((error) => {
-        workerPromise = null; // nouvel essai possible (ex. connexion revenue)
-        throw error;
-      });
+    workerPromise = createTessWorker().catch((error) => {
+      workerPromise = null; // nouvel essai possible (ex. connexion revenue)
+      throw error;
+    });
   }
   return workerPromise;
 }
@@ -178,6 +180,30 @@ export function splitByGaps(words: Word[], gapFactor: number): Word[][] {
   return groups;
 }
 
+/** Lit les lignes d'une image avec le worker donné (page seg. posée à chaque lecture : le worker partagé sert aussi aux bandes). */
+async function readWith(worker: Worker, image: Blob, o: Required<OcrOptions>, canvasPromise = preprocess(image, o.preprocess)): Promise<OcrLine[]> {
+  const canvas = await canvasPromise;
+  await worker.setParameters({ tessedit_pageseg_mode: (o.layout === "sparse" ? "11" : "3") as never });
+  const { data } = await worker.recognize(o.whiteText ? darkestChannel(canvas) : canvas, {}, { blocks: true, text: true });
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+  const lines: OcrLine[] = [];
+  for (const block of data.blocks ?? []) {
+    for (const paragraph of block.paragraphs) {
+      for (const line of paragraph.lines) {
+        for (const group of splitByGaps(line.words as Word[], o.columnGap)) {
+          const text = group.map((w) => w.text).join(" ").replace(/\s+/g, " ").trim();
+          const confidence = group.reduce((s, w) => s + w.confidence, 0) / group.length;
+          const x0 = Math.min(...group.map((w) => w.bbox.x0));
+          const y0 = Math.min(...group.map((w) => w.bbox.y0));
+          const box = [x0, y0, Math.max(1, Math.max(...group.map((w) => w.bbox.x1)) - x0), Math.max(1, Math.max(...group.map((w) => w.bbox.y1)) - y0)] as const;
+          if (text) lines.push({ text, confidence, tone: toneOf(ctx.getImageData(...box).data), x: x0, h: box[3] });
+        }
+      }
+    }
+  }
+  return lines;
+}
+
 /** Lit les lignes de texte d'une image (capture collée ou choisie). */
 export async function readImageLines(
   image: Blob,
@@ -188,27 +214,48 @@ export async function readImageLines(
   onProgress = progress ?? null;
   try {
     const [worker, canvas] = await Promise.all([getWorker(), preprocess(image, o.preprocess)]);
-    await worker.setParameters({ tessedit_pageseg_mode: (o.layout === "sparse" ? "11" : "3") as never });
-    const { data } = await worker.recognize(o.whiteText ? darkestChannel(canvas) : canvas, {}, { blocks: true, text: true });
-    const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
-    const lines: OcrLine[] = [];
-    for (const block of data.blocks ?? []) {
-      for (const paragraph of block.paragraphs) {
-        for (const line of paragraph.lines) {
-          for (const group of splitByGaps(line.words as Word[], o.columnGap)) {
-            const text = group.map((w) => w.text).join(" ").replace(/\s+/g, " ").trim();
-            const confidence = group.reduce((s, w) => s + w.confidence, 0) / group.length;
-            const x0 = Math.min(...group.map((w) => w.bbox.x0));
-            const y0 = Math.min(...group.map((w) => w.bbox.y0));
-            const box = [x0, y0, Math.max(1, Math.max(...group.map((w) => w.bbox.x1)) - x0), Math.max(1, Math.max(...group.map((w) => w.bbox.y1)) - y0)] as const;
-            if (text) lines.push({ text, confidence, tone: toneOf(ctx.getImageData(...box).data), x: x0, h: box[3] });
-          }
-        }
-      }
-    }
-    return lines;
+    return await readWith(worker, image, o, Promise.resolve(canvas));
   } finally {
     onProgress = null;
+  }
+}
+
+/** Nombre de workers pour un lot : au plus 3 (chacun charge les données de langue), un cœur laissé à la page. */
+export function poolSize(images: number, cores: number): number {
+  return Math.max(1, Math.min(3, cores - 1, images));
+}
+
+/** Lit plusieurs images en parallèle (petit lot de workers) ; lignes de chaque image DANS L'ORDRE d'entrée. */
+export async function readImagesLines(
+  images: Blob[],
+  options: OcrOptions = {},
+  onDone?: (done: number, total: number) => void,
+): Promise<OcrLine[][]> {
+  if (images.length === 1) {
+    const lines = await readImageLines(images[0], undefined, options);
+    onDone?.(1, 1);
+    return [lines];
+  }
+  const o = { ...DEFAULT_OCR_OPTIONS, ...options };
+  const n = poolSize(images.length, navigator.hardwareConcurrency || 2);
+  const workers = await Promise.all(Array.from({ length: n }, (_, i) => (i === 0 ? getWorker() : createTessWorker())));
+  const out: OcrLine[][] = new Array(images.length);
+  let next = 0;
+  let done = 0;
+  try {
+    await Promise.all(
+      workers.map(async (worker) => {
+        while (next < images.length) {
+          const i = next++;
+          out[i] = await readWith(worker, images[i], o);
+          onDone?.(++done, images.length);
+        }
+      }),
+    );
+    return out;
+  } finally {
+    // le premier est le worker partagé : gardé
+    await Promise.allSettled(workers.slice(1).map((w) => w.terminate()));
   }
 }
 

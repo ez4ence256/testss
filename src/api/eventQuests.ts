@@ -7,6 +7,7 @@
 // Les objectifs viennent du wiki : aucune position sur la carte n'est inventée.
 
 import type { GameMap, TarkovData, Task, Trader } from "../types";
+import type { ModeState } from "../state/store";
 import { baseQuestName } from "../lib/questWiki";
 import { cleanInline, findSection, parseBlocks, parseInfobox, splitSections } from "../lib/wikiText";
 import { pageUrlFor, readCache, wikiRequest, wikiTitleFromLink, writeCache } from "./wiki";
@@ -138,6 +139,38 @@ export function buildEventTasks(entries: EventEntry[], data: Pick<TarkovData, "t
         }),
       };
     });
+}
+
+/**
+ * Quête du wiki que tarkov.dev vient d'ajouter : l'ancien id `wiki-…` (sélection, échec, cases cochées, positions à la main)
+ * est repris par le vrai id. Objectifs repris par rang (n -> n-ième objectif de tarkov.dev) ; sans équivalent : "" = à supprimer.
+ * Null si rien à migrer (donc rejouable sans effet).
+ */
+export function wikiMigration(
+  mode: Pick<ModeState, "selected" | "done" | "failed" | "manual">,
+  tasks: Task[],
+): { tasks: Record<string, string>; objectives: Record<string, string> } | null {
+  const byOld = new Map<string, Task>();
+  for (const t of tasks) {
+    for (const x of [t.nameEn, baseQuestName(t.nameEn), wikiTitleFromLink(t.wikiLink)]) {
+      if (x && !byOld.has(`wiki-${eventSlug(x)}`)) byOld.set(`wiki-${eventSlug(x)}`, t);
+    }
+  }
+  const out = { tasks: {} as Record<string, string>, objectives: {} as Record<string, string> };
+  const note = (id: string) => {
+    const t = byOld.get(id);
+    if (t) out.tasks[id] = t.id;
+  };
+  mode.selected.forEach((s) => note(s.taskId));
+  Object.keys(mode.failed ?? {}).forEach(note);
+  for (const key of [...Object.keys(mode.done), ...Object.keys(mode.manual)]) {
+    const m = /^(.+)-(\d+)$/.exec(key);
+    const t = m && byOld.get(m[1]);
+    if (!m || !t) continue;
+    out.tasks[m[1]] = t.id;
+    out.objectives[key] = t.objectives[Number(m[2]) - 1]?.id ?? "";
+  }
+  return Object.keys(out.tasks).length ? out : null;
 }
 
 /** Pages d'événement classées « Quests », hors « Historical content » (1 requête, +1 si l'API continue). */

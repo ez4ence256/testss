@@ -49,7 +49,7 @@ export function similarity(a: string, b: string): number {
   return 1 - editDistance(a, b, longest) / longest;
 }
 
-interface Candidate {
+export interface Candidate {
   taskId: string;
   base: string;
   pvp: boolean;
@@ -84,6 +84,8 @@ export interface OcrMatchResult {
   uncertain: OcrMatch[];
   /** Lignes non utilisées (objectifs, marchands, boutons, bruit…). */
   unmatched: string[];
+  /** Noms lus dans la colonne des quêtes d'un tableau mais inconnus du site (quête trop récente pour tarkov.dev ?). */
+  unknown?: string[];
 }
 
 function bestFor(text: string, candidates: Candidate[]): { taskId: string; score: number } | null {
@@ -101,13 +103,17 @@ function bestFor(text: string, candidates: Candidate[]): { taskId: string; score
   return best;
 }
 
+/** Meilleur score d'un texte contre des candidats déjà construits (0 si rien ne ressemble). */
+export function bestScore(text: string, candidates: Candidate[]): number {
+  return bestFor(text, candidates)?.score ?? 0;
+}
+
 /**
  * Associe les lignes de l'OCR aux quêtes. Chaque ligne sert au plus une fois et chaque
  * quête n'est proposée qu'une fois (meilleur score). Un nom sur deux lignes est essayé
  * en joignant deux lignes consécutives.
  */
-export function matchOcrLines(lines: string[], tasks: Pick<Task, "id" | "name" | "nameEn">[]): OcrMatchResult {
-  const candidates = buildCandidates(tasks);
+export function matchOcrLines(lines: string[], tasks: Pick<Task, "id" | "name" | "nameEn">[], candidates: Candidate[] = buildCandidates(tasks)): OcrMatchResult {
   const clean = lines.map((l) => l.replace(/\s+/g, " ").trim());
   const proposals: OcrMatch[] = [];
   clean.forEach((line, i) => {
@@ -139,19 +145,41 @@ export function matchOcrLines(lines: string[], tasks: Pick<Task, "id" | "name" |
 }
 
 /**
- * Lignes hors de la colonne des noms de quête, à relire sans elles : dans un tableau (tâches d'un marchand,
- * menu Personnage), la colonne Lieu « Reserve » se lisait comme la quête « Reserve ». Seulement quand une
- * colonne se dégage : 3 quêtes au moins, les deux tiers alignées à gauche (15 hauteurs de texte : l'icône
- * de la quête est parfois lue avec le nom, la colonne Lieu est bien plus loin).
+ * Colonne des noms de quête d'un tableau (tâches d'un marchand, menu Personnage) : lignes hors colonne (à relire
+ * sans elles : la colonne Lieu « Reserve » se lisait comme la quête « Reserve ») et lignes dans la colonne.
+ * Seulement quand une colonne se dégage : 3 quêtes au moins, les deux tiers alignées à gauche (15 hauteurs de
+ * texte : l'icône de la quête est parfois lue avec le nom, la colonne Lieu est bien plus loin). Sinon null.
  */
-export function offColumnLines(r: OcrMatchResult, lines: { x?: number; h?: number }[]): Set<number> {
+export function nameColumn(r: OcrMatchResult, lines: { x?: number; h?: number }[]): { off: Set<number>; inside: Set<number> } | null {
   const firsts = [...r.recognized, ...r.uncertain].map((m) => lines[m.lineIndexes[0]]).filter((l) => l.x !== undefined && l.h);
-  if (firsts.length < 3) return new Set();
+  if (firsts.length < 3) return null;
   const mid = (v: number[]) => [...v].sort((a, b) => a - b)[v.length >> 1];
   const x = mid(firsts.map((l) => l.x!));
   const tol = 15 * mid(firsts.map((l) => l.h!));
-  if (firsts.filter((l) => Math.abs(l.x! - x) <= tol).length * 3 < firsts.length * 2) return new Set();
-  return new Set(lines.flatMap((l, i) => (l.x !== undefined && Math.abs(l.x - x) > tol ? [i] : [])));
+  if (firsts.filter((l) => Math.abs(l.x! - x) <= tol).length * 3 < firsts.length * 2) return null;
+  const idx = (inCol: boolean) => new Set(lines.flatMap((l, i) => (l.x !== undefined && (Math.abs(l.x - x) <= tol) === inCol ? [i] : [])));
+  return { off: idx(false), inside: idx(true) };
+}
+
+export const offColumnLines = (r: OcrMatchResult, lines: { x?: number; h?: number }[]): Set<number> => nameColumn(r, lines)?.off ?? new Set();
+
+// en-têtes du tableau des tâches (jeu en anglais ou en français) : « Type Class » n'est pas une quête
+const HEADER_WORDS = new Set("trader type class task location status progress marchand classe tache lieu statut progression".split(" "));
+
+/** Ressemble à un nom de quête : 2 mots ou 6 lettres au moins, 70 % de lettres (ni nombre, ni pourcentage, ni bouton d'un mot), pas un en-tête. */
+export function looksLikeName(text: string): boolean {
+  const t = text.replace(/\s+/g, "");
+  const letters = (t.match(/\p{L}/gu) ?? []).length;
+  if (normalizeOcr(text).split(" ").every((w) => HEADER_WORDS.has(w))) return false;
+  // un mot de 4 lettres au moins : « Al BR » (icônes lues au téléphone) n'est pas un nom
+  const words = text.trim().split(/\s+/);
+  return letters >= 4 && letters >= t.length * 0.7 && words.some((w) => (w.match(/\p{L}/gu) ?? []).length >= 4) && (words.length >= 2 || letters >= 6);
+}
+
+/** Lignes de la colonne des noms que aucune quête n'a utilisées et qui ressemblent à un nom : quêtes inconnues du site. */
+export function unknownNames(r: OcrMatchResult, texts: string[], inside: Set<number>): string[] {
+  const used = new Set([...r.recognized, ...r.uncertain].flatMap((m) => m.lineIndexes));
+  return [...inside].filter((i) => !used.has(i)).map((i) => texts[i].replace(/\s+/g, " ").trim()).filter(looksLikeName);
 }
 
 export interface ItemOcrMatch<T> {
