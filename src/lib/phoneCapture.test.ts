@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { downscaleSize, isLocalOrigin, mergeOcrResults, normalizeOrigin, phoneCodeFromSearch, phoneUrl } from "./phoneCapture";
+import { downscaleSize, isLocalOrigin, mergeOcrResults, normalizeOrigin, phoneCodeFromSearch, phoneUrl, pickFrames, sharpness } from "./phoneCapture";
 import type { OcrMatch, OcrMatchResult } from "./ocrMatch";
 
 const m = (taskId: string, score: number, text = taskId): OcrMatch => ({ taskId, score, text, lineIndexes: [0] });
@@ -69,5 +69,19 @@ describe("mergeOcrResults", () => {
   it("garde les quêtes de photos différentes", () => {
     const out = mergeOcrResults([res([m("a", 0.9)]), res([m("b", 0.9)])]);
     expect(out.recognized.map((x) => x.taskId)).toEqual(["a", "b"]);
+  });
+});
+
+describe("images d'une vidéo", () => {
+  const flat = (v: number) => new Uint8ClampedArray(16).fill(v);
+  it("netteté : un damier est plus net qu'une image unie", () => {
+    const checker = new Uint8ClampedArray(16).map((_, i) => ((i % 4) + Math.floor(i / 4)) % 2 ? 255 : 0);
+    expect(sharpness(checker, 4, 4)).toBeGreaterThan(sharpness(flat(128), 4, 4));
+  });
+  it("la plus nette de chaque tranche, sans répéter un écran arrêté", () => {
+    const f = (t: number, sharp: number, v: number) => ({ t, sharp, gray: flat(v) });
+    // tranches de 1 s (durée 4 s, 4 images au plus) ; de 2 à 3 s la liste ne bouge plus
+    const samples = [f(0.1, 1, 10), f(0.5, 5, 20), f(1.2, 3, 60), f(1.8, 2, 70), f(2.4, 9, 61), f(3.5, 4, 120)];
+    expect(pickFrames(samples, 4, 4)).toEqual([0.5, 1.2, 3.5]);
   });
 });

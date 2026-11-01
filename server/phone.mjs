@@ -8,7 +8,7 @@ import { networkInterfaces } from "node:os";
 
 export const LIMITS = {
   maxPhotoBytes: 3 * 1024 * 1024,
-  maxPhotos: 12,
+  maxPhotos: 30, // une vidéo donne jusqu'à 24 images
   maxSessions: 200,
   maxTotalBytes: 100 * 1024 * 1024,
   maxListeners: 2,

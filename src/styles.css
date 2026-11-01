@@ -1020,6 +1020,20 @@ body.is-resizing {
 .capture-name {
   font-weight: 600;
 }
+.capture-tone {
+  margin-left: 0.4rem;
+  padding: 0 0.35rem;
+  border-radius: 3px;
+  font-size: 0.75rem;
+}
+.tone-blue {
+  background: #1d3a4a;
+  color: #8fc8e6;
+}
+.tone-brown {
+  background: #4a3517;
+  color: #e6c38f;
+}
 .capture-read {
   display: block;
   overflow-wrap: anywhere;
@@ -3570,6 +3584,11 @@ kbd {
 .phone-page h1 {
   font-size: 1.25rem;
   margin: 0;
+}
+.phone-modes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
 }
 .phone-shot {
   padding: 0.9rem 1rem;

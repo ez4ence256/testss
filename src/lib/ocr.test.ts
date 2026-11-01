@@ -1,6 +1,6 @@
 // Séparation des colonnes d'une ligne lue par l'OCR (l'OCR elle-même n'est pas lancée).
 import { describe, expect, it } from "vitest";
-import { splitByGaps } from "./ocr";
+import { splitByGaps, toneOf } from "./ocr";
 
 const word = (text: string, x0: number, x1: number) => ({ text, confidence: 90, bbox: { x0, x1, y0: 0, y1: 20 } });
 
@@ -19,5 +19,18 @@ describe("colonnes d'une ligne", () => {
 
   it("ligne vide", () => {
     expect(splitByGaps([], 1.6)).toEqual([]);
+  });
+});
+
+describe("fond d'une ligne (tâches d'un marchand)", () => {
+  // fond mesuré sur des captures, plus une lettre claire qui ne compte pas
+  const px = (bg: number[]) => new Uint8ClampedArray([...bg, 255, ...bg, 255, 220, 220, 210, 255]);
+  it("bleu = terminée, brun = en cours, gris = rien", () => {
+    expect(toneOf(px([14, 24, 29]))).toBe("blue");
+    expect(toneOf(px([32, 23, 9]))).toBe("brown");
+    expect(toneOf(px([25, 25, 27]))).toBeUndefined();
+    // filmé au téléphone
+    expect(toneOf(px([40, 140, 200]))).toBe("blue");
+    expect(toneOf(px([220, 130, 40]))).toBe("brown");
   });
 });

@@ -8,7 +8,7 @@ import { PhoneCapture } from "./PhoneCapture";
 import { isStaleBuildError, staleBuildMessage } from "../lib/staleBuild";
 import { mergeOcrResults } from "../lib/phoneCapture";
 import { matchOcrLines, type OcrMatch, type OcrMatchResult } from "../lib/ocrMatch";
-import type { OcrProgress } from "../lib/ocr";
+import type { OcrProgress, Tone } from "../lib/ocr";
 import { tr } from "../lib/i18n";
 import { UiIcon } from "./UiIcon";
 import { filterQuests } from "../lib/questFilter";
@@ -20,6 +20,8 @@ interface Props {
   pasted: { blob: Blob; n: number } | null;
   /** Ajoute les quêtes cochées ; renvoie le message à afficher (map affichée ou non). */
   onApply: (taskIds: string[], replace: boolean) => string;
+  /** Liste des tâches d'un marchand : quêtes bleues terminées, brunes en cours (comme les événements du Monitor). */
+  onStatus: (finished: string[], started: string[]) => void;
 }
 
 type State =
@@ -38,7 +40,7 @@ const STATUS_LABELS: Record<string, [string, string]> = {
   "recognizing text": ["Lecture du texte…", "Reading the text…"],
 };
 
-export function CaptureTab({ tasks, pasted, onApply }: Props) {
+export function CaptureTab({ tasks, pasted, onApply, onStatus }: Props) {
   const [state, setState] = useState<State>({ step: "idle" });
   const [preview, setPreview] = useState<string | null>(null);
   const [checked, setChecked] = useState<Set<string>>(new Set());
@@ -52,8 +54,9 @@ export function CaptureTab({ tasks, pasted, onApply }: Props) {
   const cameraRef = useRef<HTMLInputElement>(null);
   const tasksById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
 
-  // une ou plusieurs images (photos du téléphone) : lecture une à une, puis un seul écran de vérification
-  const handleImages = async (blobs: Blob[]) => {
+  // une ou plusieurs images (photos du téléphone) : lecture une à une, puis un seul écran de vérification.
+  // Au téléphone, les fonds des tâches d'un marchand sont vifs (bleu, orange) : lire le canal le plus sombre
+  const handleImages = async (blobs: Blob[], phone = false) => {
     setMessage(null);
     setPreview((old) => {
       if (old) URL.revokeObjectURL(old);
@@ -65,13 +68,14 @@ export function CaptureTab({ tasks, pasted, onApply }: Props) {
       const results: OcrMatchResult[] = [];
       for (const [i, blob] of blobs.entries()) {
         const photo: [number, number] | undefined = blobs.length > 1 ? [i + 1, blobs.length] : undefined;
-        const lines = await readImageLines(blob, (progress) => setState({ step: "reading", progress, photo }));
-        results.push(
-          matchOcrLines(
-            lines.map((l) => l.text),
-            tasks,
-          ),
+        const lines = await readImageLines(blob, (progress) => setState({ step: "reading", progress, photo }), { whiteText: phone });
+        const r = matchOcrLines(
+          // liste d'un marchand : chaque ligne commence par l'icône de la quête, lue « ES », « PM »…
+          lines.map((l) => (l.tone ? l.text.replace(/^\S{1,2} /, "") : l.text)),
+          tasks,
         );
+        const withTone = (m: OcrMatch) => ({ ...m, tone: lines[m.lineIndexes[0]].tone });
+        results.push({ ...r, recognized: r.recognized.map(withTone), uncertain: r.uncertain.map(withTone) });
       }
       const result = mergeOcrResults(results);
       setChecked(new Set(result.recognized.map((m) => m.taskId)));
@@ -124,6 +128,7 @@ export function CaptureTab({ tasks, pasted, onApply }: Props) {
           <input type="checkbox" checked={checked.has(m.taskId)} onChange={() => toggle(m.taskId)} />
           <span>
             <span className="capture-name">{task.name}</span>
+            {m.tone && <span className={`capture-tone tone-${m.tone}`}>{m.tone === "blue" ? tr("terminée", "completed") : tr("en cours", "in progress")}</span>}
             {task.nameEn !== task.name && <span className="muted small"> · {task.nameEn}</span>}
             <span className="muted small capture-read">
               {uncertain ? tr("Lu par l'OCR : ", "Read by OCR: ") : tr("Lu : ", "Read: ")}{tr(`« ${m.text} »`, `"${m.text}"`)}
@@ -136,6 +141,10 @@ export function CaptureTab({ tasks, pasted, onApply }: Props) {
   };
 
   const progress = state.step === "reading" ? state.progress : null;
+  // lignes à fond coloré : capture de la liste des tâches d'un marchand
+  const toned = state.step === "review" ? [...state.result.recognized, ...state.result.uncertain].filter((m) => m.tone) : [];
+  const toneIds = (tone: Tone) => toned.filter((m) => m.tone === tone && checked.has(m.taskId)).map((m) => m.taskId);
+  const [finished, started] = [toneIds("blue"), toneIds("brown")];
 
   return (
     <div
@@ -159,6 +168,12 @@ export function CaptureTab({ tasks, pasted, onApply }: Props) {
         {tr(" du jeu (filtré par map si vous voulez), puis", " menu (filtered by map if you like), then")}{" "}
         <kbd>Ctrl</kbd>+<kbd>V</kbd>{tr(" n'importe où dans l'app (sauf dans un champ de texte), ou :", " anywhere in the app (except in a text field), or:")}
       </p>
+      <p className="small">
+        {tr(
+          "Ou la liste des tâches d'un marchand, terminées affichées : les quêtes sur fond bleu sont marquées terminées d'un coup, celles sur fond brun ajoutées à vos quêtes.",
+          "Or a trader's task list with completed ones shown: quests on a blue background are marked completed in one go, those on a brown background added to your quests.",
+        )}
+      </p>
       <div className="btn-row">
         <button className="btn btn-primary btn-small" onClick={() => fileRef.current?.click()}>
           {tr("Choisir une image", "Choose an image")}
@@ -171,7 +186,7 @@ export function CaptureTab({ tasks, pasted, onApply }: Props) {
         <input ref={cameraRef} type="file" accept="image/*" capture="environment" hidden onChange={onPick} />
         <span className="muted small">{tr("ou glissez-déposez l'image ici.", "or drag and drop the image here.")}</span>
       </div>
-      <PhoneCapture onPhotos={(photos) => void handleImages(photos)} />
+      <PhoneCapture onPhotos={(photos) => void handleImages(photos, true)} />
       <p className="muted small">
         {tr(
           "La lecture se fait dans votre navigateur : l'image n'est envoyée nulle part (avec le téléphone, les photos transitent par ce serveur, en mémoire, puis sont effacées). La première fois, environ 4 Mo de données de langue (français + anglais) sont téléchargés, puis gardés en cache.",
@@ -254,6 +269,19 @@ export function CaptureTab({ tasks, pasted, onApply }: Props) {
               </ul>
             )}
           </section>
+          {finished.length + started.length > 0 && (
+            <div className="btn-row">
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  onStatus(finished, started);
+                  setState({ step: "idle" });
+                }}
+              >
+                {tr(`Mettre à jour mes quêtes (${finished.length} terminées, ${started.length} en cours)`, `Update my quests (${finished.length} completed, ${started.length} in progress)`)}
+              </button>
+            </div>
+          )}
           {checked.size > 0 && (
             <>
               <label className="check">

@@ -61,3 +61,49 @@ export function mergeOcrResults(results: OcrMatchResult[]): OcrMatchResult {
     unmatched: results.flatMap((r) => r.unmatched),
   };
 }
+
+/** Images tirées d'une vidéo, au plus (le relais en garde 30 par session, photos comprises). */
+export const VIDEO_MAX_FRAMES = 24;
+/** Écart entre deux images candidates d'une vidéo (s). */
+export const VIDEO_STEP = 0.2;
+
+/** Image candidate : instant, netteté, petite version en gris (pour comparer deux images). */
+export interface FrameSample {
+  t: number;
+  sharp: number;
+  gray: Uint8ClampedArray;
+}
+
+/** Netteté d'une image en gris : écart moyen d'un pixel à ses voisins (le flou de bougé l'écrase). */
+export function sharpness(gray: Uint8ClampedArray, width: number, height: number): number {
+  let s = 0;
+  for (let y = 1; y < height - 1; y++)
+    for (let x = 1; x < width - 1; x++) {
+      const i = y * width + x;
+      s += Math.abs(4 * gray[i] - gray[i - 1] - gray[i + 1] - gray[i - width] - gray[i + width]);
+    }
+  return s / Math.max(1, (width - 2) * (height - 2));
+}
+
+const meanDiff = (a: Uint8ClampedArray, b: Uint8ClampedArray) => {
+  let s = 0;
+  for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]);
+  return s / Math.max(1, a.length);
+};
+
+/**
+ * Instants à garder d'une vidéo de la liste qui défile : la plus nette de chaque tranche (durée / max, 0,6 s
+ * au moins), sauf si elle ressemble à la précédente gardée (liste arrêtée : même écran).
+ */
+export function pickFrames(samples: FrameSample[], duration: number, max = VIDEO_MAX_FRAMES, minDiff = 4): number[] {
+  const slot = Math.max(0.6, duration / max);
+  const best = new Map<number, FrameSample>();
+  for (const f of samples) {
+    const k = Math.floor(f.t / slot);
+    if (!best.has(k) || f.sharp > best.get(k)!.sharp) best.set(k, f);
+  }
+  const kept: FrameSample[] = [];
+  for (const [, f] of [...best].sort((a, b) => a[0] - b[0])) if (!kept.length || meanDiff(f.gray, kept[kept.length - 1].gray) >= minDiff) kept.push(f);
+  return kept.slice(0, max).map((f) => f.t);
+}
+

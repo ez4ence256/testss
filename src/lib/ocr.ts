@@ -12,6 +12,27 @@ export interface OcrLine {
   text: string;
   /** Confiance de Tesseract, de 0 à 100. */
   confidence: number;
+  /** Fond de la ligne dans la liste des tâches d'un marchand : bleu = terminée, brun = en cours. */
+  tone?: Tone;
+}
+
+export type Tone = "blue" | "brown";
+
+/**
+ * Couleur du fond sous une ligne (pixels RGBA) : les lettres claires sont écartées. Mesuré sur le menu
+ * Tâches d'un marchand : bleu (14, 24, 29), brun (32, 23, 9) sur capture ; filmés au téléphone, bien plus vifs
+ * (bleu clair, orange). Un fond gris (menu Personnage) n'a pas de teinte.
+ */
+export function toneOf(px: Uint8ClampedArray): Tone | undefined {
+  let diff = 0;
+  let n = 0;
+  for (let i = 0; i < px.length; i += 4) {
+    if (Math.min(px[i], px[i + 1], px[i + 2]) > 150) continue; // lettres blanches
+    diff += px[i + 2] - px[i];
+    n++;
+  }
+  if (!n) return undefined;
+  return diff / n > 8 ? "blue" : diff / n < -8 ? "brown" : undefined;
 }
 
 export interface OcrProgress {
@@ -99,6 +120,23 @@ export interface OcrOptions {
   layout?: "auto" | "sparse";
   /** Coupe une ligne là où l'espace entre deux mots dépasse ce multiple de la hauteur du texte (colonnes). */
   columnGap?: number;
+  /**
+   * Lire le canal le plus sombre de chaque pixel : le texte blanc reste blanc, les fonds colorés (bleu, orange
+   * des tâches d'un marchand filmées au téléphone) deviennent sombres.
+   */
+  whiteText?: boolean;
+}
+
+/** Copie de l'image où chaque pixel prend son canal le plus sombre (voir OcrOptions.whiteText). */
+function darkestChannel(src: HTMLCanvasElement): HTMLCanvasElement {
+  const out = document.createElement("canvas");
+  out.width = src.width;
+  out.height = src.height;
+  const img = src.getContext("2d", { willReadFrequently: true })!.getImageData(0, 0, src.width, src.height);
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) d[i] = d[i + 1] = d[i + 2] = Math.min(d[i], d[i + 1], d[i + 2]);
+  out.getContext("2d")!.putImageData(img, 0, 0);
+  return out;
 }
 
 /**
@@ -106,7 +144,7 @@ export interface OcrOptions {
  * voir JOURNAL.md) : agrandir seulement, texte épars, colonnes séparées -> 7/7 quêtes,
  * aucune fausse. Le prétraitement "full" (contraste + inversion) faisait tomber à 1/8.
  */
-export const DEFAULT_OCR_OPTIONS: Required<OcrOptions> = { preprocess: "upscale", layout: "sparse", columnGap: 1.6 };
+export const DEFAULT_OCR_OPTIONS: Required<OcrOptions> = { preprocess: "upscale", layout: "sparse", columnGap: 1.6, whiteText: false };
 
 interface Box {
   x0: number;
@@ -144,7 +182,8 @@ export async function readImageLines(
   try {
     const [worker, canvas] = await Promise.all([getWorker(), preprocess(image, o.preprocess)]);
     await worker.setParameters({ tessedit_pageseg_mode: (o.layout === "sparse" ? "11" : "3") as never });
-    const { data } = await worker.recognize(canvas, {}, { blocks: true, text: true });
+    const { data } = await worker.recognize(o.whiteText ? darkestChannel(canvas) : canvas, {}, { blocks: true, text: true });
+    const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
     const lines: OcrLine[] = [];
     for (const block of data.blocks ?? []) {
       for (const paragraph of block.paragraphs) {
@@ -152,7 +191,10 @@ export async function readImageLines(
           for (const group of splitByGaps(line.words as Word[], o.columnGap)) {
             const text = group.map((w) => w.text).join(" ").replace(/\s+/g, " ").trim();
             const confidence = group.reduce((s, w) => s + w.confidence, 0) / group.length;
-            if (text) lines.push({ text, confidence });
+            const x0 = Math.min(...group.map((w) => w.bbox.x0));
+            const y0 = Math.min(...group.map((w) => w.bbox.y0));
+            const box = [x0, y0, Math.max(1, Math.max(...group.map((w) => w.bbox.x1)) - x0), Math.max(1, Math.max(...group.map((w) => w.bbox.y1)) - y0)] as const;
+            if (text) lines.push({ text, confidence, tone: toneOf(ctx.getImageData(...box).data) });
           }
         }
       }

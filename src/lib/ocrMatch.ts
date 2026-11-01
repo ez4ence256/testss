@@ -9,6 +9,7 @@
 // Tout le reste de la capture (objectifs, marchands, boutons…) finit dans « non reconnu ».
 
 import type { Task } from "../types";
+import type { Tone } from "./ocr";
 import { editDistance } from "./search";
 
 /** Au-dessus : reconnue (cochée). Entre les deux : incertaine (décochée, à vérifier). */
@@ -74,6 +75,8 @@ export interface OcrMatch {
   /** Texte lu par l'OCR (une ou deux lignes). */
   text: string;
   lineIndexes: number[];
+  /** Fond de la ligne (liste des tâches d'un marchand) : bleu = terminée, brun = en cours. */
+  tone?: Tone;
 }
 
 export interface OcrMatchResult {

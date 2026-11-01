@@ -849,6 +849,12 @@ export default function App() {
             <CaptureTab
               tasks={tasks}
               pasted={pastedImage}
+              onStatus={(finished, started) =>
+                applyMonitor(
+                  [...finished.map((taskId) => ({ taskId, status: "finished" as const })), ...started.map((taskId) => ({ taskId, status: "started" as const }))].map((t) => ({ type: "task" as const, ...t, gameMode: gameMode!, at: Date.now() })),
+                  tr("Capture", "Screenshot"),
+                )
+              }
               onApply={(taskIds, replace) => {
                 dispatch({ type: "selectTasks", taskIds, replace });
                 const added = taskIds.map((id) => tasksById.get(id)).filter((t): t is Task => Boolean(t));
