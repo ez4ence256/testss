@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GameMap, Task, Trader } from "../types";
-import { buildEventTasks, eventSlug, loadEventEntries, parseEventQuest, wikiMigration } from "./eventQuests";
+import { buildEventTasks, eventSlug, knownQuestKeys, loadEventEntries, parseEventQuest, vanishedWikiIds, wikiMigration } from "./eventQuests";
 
 // Extrait réel (réduit) de la page « All-Inclusive Support » du wiki
 const ALL_INCLUSIVE = `{{Event content}}
@@ -116,36 +116,111 @@ describe("buildEventTasks", () => {
 describe("loadEventEntries", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.useRealTimers();
     localStorage.clear();
   });
 
-  it("liste (avec continuation) + un lot de wikitext, puis cache", async () => {
+  const ARENA = `{{Infobox quest\n|location = [[Arena]]\n|given by = [[Ref]]\n}}\n==Objectives==\n* Win`;
+  const wikiPage = (title: string, content: string) => ({ title, revisions: [{ slots: { main: { content } } }] });
+  /** wiki simulé : liste en 2 requêtes (continuation), puis wikitext des titres demandés */
+  const mockWiki = (listFails = () => false) => {
     let n = 0;
-    const fetchMock = vi.fn(async (url: string) => {
+    const requested: string[] = [];
+    const fn = vi.fn(async (url: string) => {
       const u = new URL(url);
       if (u.searchParams.get("generator")) {
+        if (listFails()) throw new TypeError("réseau");
         n++;
+        const cat = [{ title: "Category:Historical content" }];
         return new Response(
           JSON.stringify(
-            n === 1
-              ? { continue: { clcontinue: "1|Quests" }, query: { pages: [{ pageid: 1, title: "All-Inclusive Support" }, { pageid: 2, title: "Old One" }] } }
-              : { query: { pages: [{ pageid: 1, title: "All-Inclusive Support", categories: [{ title: "Category:Quests" }] }, { pageid: 2, title: "Old One", categories: [{ title: "Category:Quests" }, { title: "Category:Historical content" }] }] } },
+            n % 2 === 1
+              ? { continue: { gcmcontinue: "x" }, query: { pages: [{ pageid: 1, title: "All-Inclusive Support" }, { pageid: 2, title: "Old One", categories: cat }, { pageid: 5, title: "Quests" }] } }
+              : { query: { pages: [{ pageid: 3, title: "Arena Win" }, { pageid: 4, title: "Known Quest" }, { pageid: 6, title: "New Beginning (Prestige 5)" }, { pageid: 2, title: "Old One", categories: cat }] } },
           ),
         );
       }
-      // + les quêtes ordinaires absentes de tarkov.dev (pages inconnues ici : ignorées)
-      expect(u.searchParams.get("titles")).toMatch(/^All-Inclusive Support\|A Familiar Face\.\.\.\|Scope the Clearing\|To the Light - /);
-      return new Response(JSON.stringify({ query: { pages: [{ title: "All-Inclusive Support", revisions: [{ slots: { main: { content: ALL_INCLUSIVE } } }] }] } }));
+      const titles = u.searchParams.get("titles")!.split("|");
+      requested.push(...titles);
+      return new Response(JSON.stringify({ query: { pages: titles.map((t) => wikiPage(t, t === "Arena Win" ? ARENA : ALL_INCLUSIVE)) } }));
     });
-    vi.stubGlobal("fetch", fetchMock);
-    vi.useFakeTimers();
-    const p = loadEventEntries();
+    vi.stubGlobal("fetch", fn);
+    return { fn, requested };
+  };
+  const run = async (p: Promise<unknown>) => {
     await vi.runAllTimersAsync();
-    expect((await p).map((e) => e.title)).toEqual(["All-Inclusive Support"]);
-    vi.useRealTimers();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    await loadEventEntries();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    return p;
+  };
+  const known = new Set([...knownQuestKeys([{ nameEn: "Known Quest", wikiLink: "" }])]);
+
+  it("Category:Quests : historique, Arena, « Quests » et Prestige écartés ; seules les pages inconnues sont lues ; cache 6 h", async () => {
+    const { fn, requested } = mockWiki();
+    vi.useFakeTimers();
+    const r = (await run(loadEventEntries(known))) as Awaited<ReturnType<typeof loadEventEntries>>;
+    expect(requested).toEqual(["All-Inclusive Support", "Arena Win"]);
+    expect(r.status).toBe("fresh");
+    expect(r.previousCount).toBeNull();
+    expect(r.listed).toEqual(["All-Inclusive Support", "Arena Win", "Known Quest"]);
+    expect(r.entries.map((e) => e.title)).toEqual(["All-Inclusive Support"]);
+    expect(fn).toHaveBeenCalledTimes(3);
+    // dans les 6 h : aucune requête
+    const c = await loadEventEntries(known);
+    expect(c.status).toBe("cached");
+    expect(c.entries.map((e) => e.title)).toEqual(["All-Inclusive Support"]);
+    expect(fn).toHaveBeenCalledTimes(3);
+  });
+
+  it("après 6 h : liste relue, pages déjà lues (même Arena = null) non relues", async () => {
+    const { fn, requested } = mockWiki();
+    vi.useFakeTimers();
+    await run(loadEventEntries(known));
+    vi.setSystemTime(Date.now() + 7 * 3600_000);
+    const r = (await run(loadEventEntries(known))) as Awaited<ReturnType<typeof loadEventEntries>>;
+    expect(r.status).toBe("fresh");
+    expect(r.previousCount).toBe(3);
+    expect(fn).toHaveBeenCalledTimes(5); // + 2 requêtes de liste seulement
+    expect(requested).toHaveLength(2);
+  });
+
+  it("wiki en échec avec un cache : ancienne liste (stale), pas []", async () => {
+    let fail = false;
+    mockWiki(() => fail);
+    vi.useFakeTimers();
+    await run(loadEventEntries(known));
+    vi.setSystemTime(Date.now() + 7 * 3600_000);
+    fail = true;
+    const r = (await run(loadEventEntries(known))) as Awaited<ReturnType<typeof loadEventEntries>>;
+    expect(r.status).toBe("stale");
+    expect(r.entries.map((e) => e.title)).toEqual(["All-Inclusive Support"]);
+  });
+
+  it("wiki en échec sans cache : rejet", async () => {
+    mockWiki(() => true);
+    vi.useFakeTimers();
+    const p = loadEventEntries(known);
+    const assertion = expect(p).rejects.toThrow();
+    await vi.runAllTimersAsync();
+    await assertion;
+  });
+});
+
+describe("vanishedWikiIds", () => {
+  // ~800 titres en vrai : 300 de remplissage pour passer le plancher sans liste précédente
+  const listed = ["Fog of War", "To the Light - Fallen Bird", ...Array.from({ length: 300 }, (_, i) => `Filler ${i}`)];
+  const sel = ["wiki-Fog-of-War", "wiki-Gone-Quest", "wiki-To-the-Light-Fallen-Bird", "tarkovdev-id"];
+  it("seulement les wiki-… absents de la liste", () => {
+    expect(vanishedWikiIds(sel, listed, null, new Set())).toEqual(["wiki-Gone-Quest"]);
+    expect(vanishedWikiIds(sel, listed, 302, new Set())).toEqual(["wiki-Gone-Quest"]);
+  });
+  it("garde-fou : sans liste précédente, moins de 300 titres -> rien", () => {
+    expect(vanishedWikiIds(sel, listed.slice(0, 2), null, new Set())).toEqual([]);
+  });
+  it("pas ceux que wikiMigration reprend", () => {
+    expect(vanishedWikiIds(sel, listed, null, new Set(["wiki-Gone-Quest"]))).toEqual([]);
+  });
+  it("garde-fou : liste qui rétrécit de plus de 20 % -> rien", () => {
+    expect(vanishedWikiIds(sel, listed, 1000, new Set())).toEqual([]);
+    expect(vanishedWikiIds(sel, listed, 370, new Set())).toEqual(["wiki-Gone-Quest"]);
   });
 });
 

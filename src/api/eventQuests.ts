@@ -1,8 +1,7 @@
-// Quêtes d'événement présentes sur le wiki mais pas (encore) dans tarkov.dev.
-// Tout passe par src/api/wiki.ts (file à 1 requête par seconde, cache de 7 jours). Requêtes :
-//  - la liste : « Category:Event_content » (articles) avec, pour chaque page, ses catégories
-//    « Quests » / « Historical content » : 1 requête, +1 si l'API continue la liste ;
-//  - le wikitext de toutes les pages retenues : 1 requête (50 titres au plus par lot).
+// Quêtes du wiki absentes de tarkov.dev (événements, Arena exclue, chaîne Lightkeeper…).
+// Tout passe par src/api/wiki.ts (file à 1 requête par seconde). Requêtes, au plus toutes les 6 h :
+//  - la liste : « Category:Quests » (articles) avec le drapeau « Historical content » : 2 requêtes (500 pages max chacune) ;
+//  - le wikitext des seules pages listées que tarkov.dev n'a pas et qu'on n'a pas déjà lues (lots de 50 titres).
 // Ce qui est gardé en cache : les quêtes lues (objectifs en texte brut), pas le wikitext.
 // Les objectifs viennent du wiki : aucune position sur la carte n'est inventée.
 
@@ -25,31 +24,18 @@ export interface EventEntry {
 }
 
 interface EventCache {
-  entries: EventEntry[];
+  listed: string[];
+  listedAt: number;
+  /** nombre de pages de la liste précédente (garde-fou de vanishedWikiIds) */
+  prevCount: number | null;
+  /** lues par titre, cumulées d'une fois sur l'autre ; null = lue sans résultat (redirection, Arena…), pas relue */
+  entries: Record<string, EventEntry | null>;
   fetchedAt: number;
 }
 
-// v3 : relit la liste tout de suite (quêtes hors événement ci-dessous)
-const CACHE_KEY = "events:v3";
-/**
- * Quêtes ordinaires du jeu absentes de tarkov.dev (novembre 2026) et hors « Event_content » sur le wiki.
- * Lues comme les quêtes d'événement ; buildEventTasks les retire dès que tarkov.dev les a.
- */
-const EXTRA_QUESTS = [
-  "A Familiar Face...",
-  "Scope the Clearing",
-  "To the Light - Getting Acquainted",
-  "To the Light - Trust but Verify",
-  "To the Light - False Call",
-  "To the Light - Someone Called?",
-  "To the Light - The Other Side",
-  "To the Light - Fallen Bird",
-  "To the Light - Clip Their Wings",
-  "To the Light - Bite the Dust",
-  "To the Light - Dangerous Ambitions",
-  "To the Light - A Time to Gather Stones",
-  "To the Light - A Time to Throw Stones",
-];
+// v4 : liste « Category:Quests », entrées cumulées par titre
+const CACHE_KEY = "events:v4";
+const LIST_TTL_MS = 6 * 3600_000;
 const BATCH = 50;
 const MAX_CONTINUATIONS = 5;
 
@@ -88,13 +74,19 @@ export const eventSlug = (title: string) => title.replace(/[^A-Za-z0-9]+/g, "-")
 
 const norm = (s: string) => s.toLowerCase().replace(/^the\s+/, "").replace(/[^a-z0-9]+/g, " ").trim();
 
+/** Clés (`norm`) des quêtes que tarkov.dev a déjà : nom de base, nom anglais, page wiki. Même appariement que wikiMigration. */
+export function knownQuestKeys(tasks: Pick<Task, "nameEn" | "wikiLink">[]): Set<string> {
+  const keys = new Set<string>();
+  for (const t of tasks) for (const x of [baseQuestName(t.nameEn), t.nameEn, wikiTitleFromLink(t.wikiLink)]) if (x) keys.add(norm(x));
+  return keys;
+}
+
 /**
  * Tâches de l'app pour les quêtes du wiki, sans celles que tarkov.dev a déjà (nom anglais ou page wiki identique).
  * Une quête que tarkov.dev ajoute plus tard disparaît donc d'elle-même.
  */
 export function buildEventTasks(entries: EventEntry[], data: Pick<TarkovData, "tasks" | "maps" | "traders">): Task[] {
-  const known = new Set(data.tasks.map((t) => norm(baseQuestName(t.nameEn))));
-  const knownPages = new Set(data.tasks.map((t) => wikiTitleFromLink(t.wikiLink)?.toLowerCase()).filter(Boolean));
+  const known = knownQuestKeys(data.tasks);
   const trader = (name: string | null): Trader | undefined => {
     const n = name ? norm(name) : "";
     return n ? data.traders.find((t) => norm(t.normalizedName) === n || norm(t.name) === n) : undefined;
@@ -106,7 +98,7 @@ export function buildEventTasks(entries: EventEntry[], data: Pick<TarkovData, "t
   };
 
   return entries
-    .filter((e) => !known.has(norm(e.title)) && !knownPages.has(e.title.toLowerCase()))
+    .filter((e) => !known.has(norm(e.title)))
     .map((e): Task => {
       const slug = eventSlug(e.title);
       const mapIds = [...new Set(e.locations.map((l) => mapOf(l)?.id).filter((id): id is string => Boolean(id)))];
@@ -185,67 +177,105 @@ export function wikiMigration(
   return Object.keys(out.tasks).length ? out : null;
 }
 
-/** Pages d'événement classées « Quests », hors « Historical content » (1 requête, +1 si l'API continue). */
-async function listEventPages(): Promise<string[]> {
-  const pages = new Map<number, { title: string; cats: Set<string> }>();
+const slugKey = (slug: string) => norm(slug.replace(/-/g, " "));
+
+/**
+ * Ids `wiki-…` sélectionnés dont la page n'est plus listée (supprimée ou passée en « Historical content »).
+ * À n'appeler qu'avec une liste fraîche ; `migratable` : ids que wikiMigration reprend (tarkov.dev l'a maintenant).
+ * Garde-fou : une liste qui rétrécit de plus de 20 % est suspecte (réponse tronquée) -> rien n'est retiré.
+ */
+export function vanishedWikiIds(selectedIds: string[], listedTitles: string[], previousListedCount: number | null, migratable: Set<string>): string[] {
+  // liste tronquée par un raté du wiki : rien retiré (sans liste précédente, ~800 titres attendus : 300 au moins)
+  if (listedTitles.length < (previousListedCount === null ? 300 : 0.8 * previousListedCount)) return [];
+  const listed = new Set(listedTitles.map((t) => slugKey(eventSlug(t))));
+  return selectedIds.filter((id) => id.startsWith("wiki-") && !migratable.has(id) && !listed.has(slugKey(id.slice(5))));
+}
+
+/** Titres de « Category:Quests » hors « Historical content », la page d'aperçu « Quests » et les « (Prestige n) » (PvP seulement). */
+async function listQuestPages(): Promise<string[]> {
+  const pages = new Map<number, { title: string; historical: boolean }>();
   let cont: Record<string, string> = {};
   for (let i = 0; i < MAX_CONTINUATIONS; i++) {
     const json = await wikiRequest({
       action: "query",
       generator: "categorymembers",
-      gcmtitle: "Category:Event_content",
+      gcmtitle: "Category:Quests",
       gcmnamespace: "0",
       gcmlimit: "500",
       prop: "categories",
       cllimit: "max",
-      clcategories: "Category:Quests|Category:Historical_content",
+      clcategories: "Category:Historical_content",
       ...cont,
     });
-    const query = (json.query ?? {}) as { pages?: { pageid: number; title: string; redirect?: boolean; categories?: { title: string }[] }[] };
+    const query = (json.query ?? {}) as { pages?: { pageid: number; title: string; categories?: { title: string }[] }[] };
     for (const p of query.pages ?? []) {
-      const e = pages.get(p.pageid) ?? { title: p.title, cats: new Set<string>() };
-      for (const c of p.categories ?? []) e.cats.add(c.title.replace(/^Category:/, "").replace(/_/g, " ").toLowerCase());
+      const e = pages.get(p.pageid) ?? { title: p.title, historical: false };
+      if (p.categories?.length) e.historical = true;
       pages.set(p.pageid, e);
     }
     if (!json.continue) {
-      return [...pages.values()].filter((p) => p.cats.has("quests") && !p.cats.has("historical content")).map((p) => p.title);
+      // shortcut: « (Prestige n) » ignoré : tarkov.dev n'a que Prestige 1-4 en PvP, à revoir s'il les ajoute en PvE
+      return [...pages.values()].filter((p) => !p.historical && p.title !== "Quests" && !/\(Prestige \d+\)/.test(p.title)).map((p) => p.title);
     }
     cont = json.continue as Record<string, string>;
   }
-  throw new Error("wiki: liste des quêtes d'événement trop longue");
+  throw new Error("wiki: liste des quêtes trop longue");
 }
 
-async function fetchEventEntries(): Promise<EventEntry[]> {
-  const titles = [...new Set([...(await listEventPages()), ...EXTRA_QUESTS])];
-  const entries: EventEntry[] = [];
-  for (let i = 0; i < titles.length; i += BATCH) {
-    const json = await wikiRequest({
-      action: "query",
-      prop: "revisions",
-      rvprop: "content",
-      rvslots: "main",
-      titles: titles.slice(i, i + BATCH).join("|"),
-    });
+export interface LoadedEvents {
+  entries: EventEntry[];
+  /** titres listés (non historiques) */
+  listed: string[];
+  listedAt: number;
+  /** « fresh » : liste relue à l'instant ; « cached » : liste de moins de 6 h ; « stale » : wiki en échec, ancienne liste */
+  status: "fresh" | "cached" | "stale";
+  /** taille de la liste précédente (null si aucune), pour vanishedWikiIds */
+  previousCount: number | null;
+}
+
+function result(c: Pick<EventCache, "listed" | "listedAt" | "prevCount" | "entries">, status: LoadedEvents["status"]): LoadedEvents {
+  const entries = c.listed.map((t) => c.entries[t]).filter((e): e is EventEntry => Boolean(e));
+  entries.sort((a, b) => a.title.localeCompare(b.title, "en"));
+  return { entries, listed: c.listed, listedAt: c.listedAt, status, previousCount: c.prevCount };
+}
+
+async function fetchEventEntries(known: Set<string>, cached: EventCache | null): Promise<LoadedEvents> {
+  const listed = await listQuestPages();
+  const entries = { ...(cached?.entries ?? {}) };
+  const todo = listed.filter((t) => !known.has(norm(t)) && !(t in entries));
+  for (let i = 0; i < todo.length; i += BATCH) {
+    const batch = todo.slice(i, i + BATCH);
+    const json = await wikiRequest({ action: "query", prop: "revisions", rvprop: "content", rvslots: "main", titles: batch.join("|") });
+    for (const t of batch) entries[t] = null;
     const pages = ((json.query ?? {}) as { pages?: { title: string; revisions?: { slots?: { main?: { content?: string } } }[] }[] }).pages ?? [];
     for (const p of pages) {
       const content = p.revisions?.[0]?.slots?.main?.content;
       const entry = content && !/^\s*#redirect/i.test(content) ? parseEventQuest(p.title, content) : null;
-      if (entry) entries.push(entry);
+      // quêtes Arena : hors du jeu PvE suivi par l'app
+      entries[p.title] = entry && !entry.locations.some((l) => /^arena$/i.test(l)) ? entry : null;
     }
   }
-  entries.sort((a, b) => a.title.localeCompare(b.title, "en"));
-  writeCache(CACHE_KEY, { entries, fetchedAt: Date.now() } satisfies EventCache);
-  return entries;
+  const next = { listed, listedAt: Date.now(), prevCount: cached ? cached.listed.length : null, entries };
+  writeCache(CACHE_KEY, { ...next, fetchedAt: next.listedAt } satisfies EventCache);
+  return result(next, "fresh");
 }
 
-let inFlight: Promise<EventEntry[]> | null = null;
+let inFlight: Promise<LoadedEvents> | null = null;
 
-/** Quêtes d'événement du wiki : cache 7 jours, sinon 2 à 3 requêtes. */
-export function loadEventEntries(): Promise<EventEntry[]> {
+/**
+ * Quêtes du wiki absentes de tarkov.dev (`known` = knownQuestKeys). Liste relue toutes les 6 h (2 requêtes),
+ * + 1 requête par lot de 50 pages jamais lues. Wiki en échec avec un cache : l'ancienne liste (« stale »), jamais [].
+ */
+export function loadEventEntries(known: Set<string>): Promise<LoadedEvents> {
   const cached = readCache<EventCache>(CACHE_KEY);
-  if (cached) return Promise.resolve(cached.entries);
-  inFlight ??= fetchEventEntries().finally(() => {
-    inFlight = null;
-  });
+  if (cached && Date.now() - cached.listedAt < LIST_TTL_MS) return Promise.resolve(result(cached, "cached"));
+  inFlight ??= fetchEventEntries(known, cached)
+    .catch((e) => {
+      if (cached) return result(cached, "stale");
+      throw e;
+    })
+    .finally(() => {
+      inFlight = null;
+    });
   return inFlight;
 }

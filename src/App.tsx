@@ -34,7 +34,7 @@ import { planMonitorBatch } from "./lib/monitorQuests";
 import { branchFailures, prerequisiteChanges } from "./lib/questChain";
 import { computeNeeds } from "./lib/itemNeeds";
 import { loadHideout, type HideoutStation } from "./api/itemList";
-import { buildEventTasks, loadEventEntries, eventSlug, wikiMigration, type EventEntry } from "./api/eventQuests";
+import { buildEventTasks, knownQuestKeys, loadEventEntries, eventSlug, vanishedWikiIds, wikiMigration, type EventEntry } from "./api/eventQuests";
 import { RoomControl } from "./components/RoomControl";
 import { LegacyRoomPrompt } from "./components/LegacyRoomPrompt";
 import { TeammatePanel } from "./components/TeammatePanel";
@@ -187,20 +187,33 @@ export default function App() {
   // la liste du wiki a fini de charger : avant, un id wiki-… sélectionné n'est pas encore un fantôme ;
   // en échec, les wiki-… ne le sont jamais (« Retirer » ferait perdre leur progression)
   const [eventsSettled, setEventsSettled] = useState<"ok" | "failed" | null>(null);
+  // liste du wiki relue à l'instant (jamais depuis le cache) : seule base pour retirer les quêtes wiki disparues
+  const [freshListing, setFreshListing] = useState<{ titles: string[]; previousCount: number | null } | null>(null);
   const dataReady = Boolean(data);
+  const dataFetchedAt = data?.fetchedAt;
   useEffect(() => {
-    if (!dataReady) return;
-    loadEventEntries().then(
-      (entries) => {
-        setEventEntries(entries);
+    if (!data) return;
+    let cancelled = false;
+    loadEventEntries(knownQuestKeys(data.tasks)).then(
+      (r) => {
+        // une liste fraîche reste valable même si l'effet a été relancé entre-temps (données tarkov.dev
+        // rafraîchies au démarrage) : le passage suivant lit le cache et ne la redonnerait pas
+        if (r.status === "fresh") setFreshListing({ titles: r.listed, previousCount: r.previousCount });
+        if (cancelled) return;
+        setEventEntries(r.entries);
         setEventsSettled("ok");
       },
       (e) => {
-        console.warn("Quêtes d'événement du wiki indisponibles :", e);
+        if (cancelled) return;
+        console.warn("Quêtes du wiki indisponibles :", e);
         setEventsSettled("failed");
       },
     );
-  }, [dataReady]);
+    return () => {
+      cancelled = true;
+    };
+    // relancé quand tarkov.dev se rafraîchit (nouveau `known`), pas à chaque changement de `data`
+  }, [dataReady, dataFetchedAt]);
   const tasks = useMemo(() => (data ? [...data.tasks, ...buildEventTasks(eventEntries, data)] : []), [data, eventEntries]);
   const maps = useMemo(() => data?.maps ?? [], [data]);
   const tasksById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
@@ -437,6 +450,20 @@ export default function App() {
     const n = Object.keys(mig.tasks).length;
     setChainNotice({ text: tr(`${n} quête(s) du wiki maintenant dans tarkov.dev : progression reprise.`, `${n} wiki quest(s) now in tarkov.dev: progress carried over.`) });
   }, [data, gameMode, mode, eventsSettled, eventEntries]);
+  // quête wiki disparue du wiki (page supprimée ou « Historical content ») : retirée de la sélection, sans « Annuler »
+  useEffect(() => {
+    if (!data || !freshListing) return;
+    const migratable = new Set(Object.keys(wikiMigration(mode, data.tasks)?.tasks ?? {}));
+    const ids = vanishedWikiIds(mode.selected.map((s) => s.taskId), freshListing.titles, freshListing.previousCount, migratable);
+    if (!ids.length) return;
+    dispatch({ type: "applyQuestStatus", done: [], failed: [], deselect: ids });
+    const names = ids.map((id) => id.slice(5).replace(/-/g, " ")).join(", ");
+    setChainNotice({
+      text: ids.length > 1
+        ? tr(`${names} retirées de ta sélection : elles ne sont plus sur le wiki.`, `${names} removed from your selection: no longer on the wiki.`)
+        : tr(`${names} retirée de ta sélection : elle n'est plus sur le wiki.`, `${names} removed from your selection: no longer on the wiki.`),
+    });
+  }, [data, mode, freshListing]);
   // sélectionnées mais absentes des données (quête retirée du site) : proposées au retrait, jamais retirées seules
   const ghostIds = useMemo(
     () =>
