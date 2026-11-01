@@ -75,7 +75,7 @@ export interface OcrMatch {
   /** Texte lu par l'OCR (une ou deux lignes). */
   text: string;
   lineIndexes: number[];
-  /** Fond de la ligne (liste des tâches d'un marchand) : bleu = terminée, brun = en cours. */
+  /** Fond de la ligne (liste des tâches d'un marchand) : bleu = terminée, brun = en cours, gris = ratée. */
   tone?: Tone;
 }
 

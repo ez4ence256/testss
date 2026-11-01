@@ -25,10 +25,11 @@ describe("colonnes d'une ligne", () => {
 describe("fond d'une ligne (tâches d'un marchand)", () => {
   // fond mesuré sur des captures, plus une lettre claire qui ne compte pas
   const px = (bg: number[]) => new Uint8ClampedArray([...bg, 255, ...bg, 255, 220, 220, 210, 255]);
-  it("bleu = terminée, brun = en cours, gris = rien", () => {
+  it("bleu = terminée, brun = en cours, gris = ratée, noir = rien", () => {
     expect(toneOf(px([14, 24, 29]))).toBe("blue");
     expect(toneOf(px([32, 23, 9]))).toBe("brown");
-    expect(toneOf(px([25, 25, 27]))).toBeUndefined();
+    expect(toneOf(px([21, 23, 22]))).toBe("grey");
+    expect(toneOf(px([1, 2, 1]))).toBeUndefined();
     // filmé au téléphone
     expect(toneOf(px([40, 140, 200]))).toBe("blue");
     expect(toneOf(px([220, 130, 40]))).toBe("brown");

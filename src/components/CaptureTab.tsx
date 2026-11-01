@@ -20,8 +20,8 @@ interface Props {
   pasted: { blob: Blob; n: number } | null;
   /** Ajoute les quêtes cochées ; renvoie le message à afficher (map affichée ou non). */
   onApply: (taskIds: string[], replace: boolean) => string;
-  /** Liste des tâches d'un marchand : quêtes bleues terminées, brunes en cours (comme les événements du Monitor). */
-  onStatus: (finished: string[], started: string[]) => void;
+  /** Liste des tâches d'un marchand : quêtes bleues terminées, brunes en cours, grises ratées (comme les événements du Monitor). */
+  onStatus: (finished: string[], started: string[], failed: string[]) => void;
 }
 
 type State =
@@ -29,6 +29,8 @@ type State =
   | { step: "reading"; progress: OcrProgress | null; photo?: [number, number] }
   | { step: "review"; result: OcrMatchResult }
   | { step: "error"; message: string };
+
+const TONE_LABELS: Record<Tone, [string, string]> = { blue: ["terminée", "completed"], brown: ["en cours", "in progress"], grey: ["ratée ?", "failed?"] };
 
 /** Étapes de Tesseract.js : [français, anglais], résolu au rendu (la langue peut changer). */
 const STATUS_LABELS: Record<string, [string, string]> = {
@@ -70,15 +72,22 @@ export function CaptureTab({ tasks, pasted, onApply, onStatus }: Props) {
         const photo: [number, number] | undefined = blobs.length > 1 ? [i + 1, blobs.length] : undefined;
         const lines = await readImageLines(blob, (progress) => setState({ step: "reading", progress, photo }), { whiteText: phone });
         const r = matchOcrLines(
-          // liste d'un marchand : chaque ligne commence par l'icône de la quête, lue « ES », « PM »…
-          lines.map((l) => (l.tone ? l.text.replace(/^\S{1,2} /, "") : l.text)),
+          // liste d'un marchand : chaque ligne commence par l'icône de la quête (et la flèche des tâches
+          // essentielles), lues « ES », « v @ »…
+          lines.map((l) => (l.tone ? l.text.replace(/^(\S{1,2} ){1,2}/, "") : l.text)),
           tasks,
         );
-        const withTone = (m: OcrMatch) => ({ ...m, tone: lines[m.lineIndexes[0]].tone });
+        const matched = [...r.recognized, ...r.uncertain].map((m) => lines[m.lineIndexes[0]].tone);
+        const colored = matched.filter((t) => t === "blue" || t === "brown").length;
+        // les fonds ne disent rien hors de la liste d'un marchand (au moins 2 quêtes, la moitié, en bleu ou brun) :
+        // le menu Personnage > Tâches a des fonds gris, et une photo d'écran teinte une ligne au hasard
+        const trader = colored >= 2 && colored * 2 >= matched.length;
+        const withTone = (m: OcrMatch) => ({ ...m, tone: trader ? lines[m.lineIndexes[0]].tone : undefined });
         results.push({ ...r, recognized: r.recognized.map(withTone), uncertain: r.uncertain.map(withTone) });
       }
       const result = mergeOcrResults(results);
-      setChecked(new Set(result.recognized.map((m) => m.taskId)));
+      // gris : ratée ou pas encore acceptée, impossible à dire sur l'image : à cocher soi-même
+      setChecked(new Set(result.recognized.filter((m) => m.tone !== "grey").map((m) => m.taskId)));
       setAdded([]);
       setSearch("");
       setState({ step: "review", result });
@@ -128,7 +137,7 @@ export function CaptureTab({ tasks, pasted, onApply, onStatus }: Props) {
           <input type="checkbox" checked={checked.has(m.taskId)} onChange={() => toggle(m.taskId)} />
           <span>
             <span className="capture-name">{task.name}</span>
-            {m.tone && <span className={`capture-tone tone-${m.tone}`}>{m.tone === "blue" ? tr("terminée", "completed") : tr("en cours", "in progress")}</span>}
+            {m.tone && <span className={`capture-tone tone-${m.tone}`}>{tr(...TONE_LABELS[m.tone])}</span>}
             {task.nameEn !== task.name && <span className="muted small"> · {task.nameEn}</span>}
             <span className="muted small capture-read">
               {uncertain ? tr("Lu par l'OCR : ", "Read by OCR: ") : tr("Lu : ", "Read: ")}{tr(`« ${m.text} »`, `"${m.text}"`)}
@@ -144,7 +153,7 @@ export function CaptureTab({ tasks, pasted, onApply, onStatus }: Props) {
   // lignes à fond coloré : capture de la liste des tâches d'un marchand
   const toned = state.step === "review" ? [...state.result.recognized, ...state.result.uncertain].filter((m) => m.tone) : [];
   const toneIds = (tone: Tone) => toned.filter((m) => m.tone === tone && checked.has(m.taskId)).map((m) => m.taskId);
-  const [finished, started] = [toneIds("blue"), toneIds("brown")];
+  const [finished, started, failed] = [toneIds("blue"), toneIds("brown"), toneIds("grey")];
 
   return (
     <div
@@ -170,8 +179,8 @@ export function CaptureTab({ tasks, pasted, onApply, onStatus }: Props) {
       </p>
       <p className="small">
         {tr(
-          "Ou la liste des tâches d'un marchand, terminées affichées : les quêtes sur fond bleu sont marquées terminées d'un coup, celles sur fond brun ajoutées à vos quêtes.",
-          "Or a trader's task list with completed ones shown: quests on a blue background are marked completed in one go, those on a brown background added to your quests.",
+          "Ou la liste des tâches d'un marchand, terminées affichées : les quêtes sur fond bleu sont marquées terminées d'un coup, celles sur fond brun ajoutées à vos quêtes. Celles sur fond gris (ratées, ou pas encore acceptées) restent décochées : cochez celles qui sont ratées.",
+          "Or a trader's task list with completed ones shown: quests on a blue background are marked completed in one go, those on a brown background added to your quests. Those on a grey background (failed, or not accepted yet) stay unchecked: check the failed ones.",
         )}
       </p>
       <div className="btn-row">
@@ -269,16 +278,19 @@ export function CaptureTab({ tasks, pasted, onApply, onStatus }: Props) {
               </ul>
             )}
           </section>
-          {finished.length + started.length > 0 && (
+          {finished.length + started.length + failed.length > 0 && (
             <div className="btn-row">
               <button
                 className="btn btn-primary"
                 onClick={() => {
-                  onStatus(finished, started);
+                  onStatus(finished, started, failed);
                   setState({ step: "idle" });
                 }}
               >
-                {tr(`Mettre à jour mes quêtes (${finished.length} terminées, ${started.length} en cours)`, `Update my quests (${finished.length} completed, ${started.length} in progress)`)}
+                {tr(
+                  `Mettre à jour mes quêtes (${finished.length} terminées, ${started.length} en cours${failed.length ? `, ${failed.length} ratées` : ""})`,
+                  `Update my quests (${finished.length} completed, ${started.length} in progress${failed.length ? `, ${failed.length} failed` : ""})`,
+                )}
               </button>
             </div>
           )}

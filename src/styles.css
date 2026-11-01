@@ -1030,6 +1030,10 @@ body.is-resizing {
   background: #1d3a4a;
   color: #8fc8e6;
 }
+.tone-grey {
+  background: #33363a;
+  color: #b8bcc2;
+}
 .tone-brown {
   background: #4a3517;
   color: #e6c38f;

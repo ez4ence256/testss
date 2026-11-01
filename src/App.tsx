@@ -849,9 +849,13 @@ export default function App() {
             <CaptureTab
               tasks={tasks}
               pasted={pastedImage}
-              onStatus={(finished, started) =>
+              onStatus={(finished, started, failed) =>
                 applyMonitor(
-                  [...finished.map((taskId) => ({ taskId, status: "finished" as const })), ...started.map((taskId) => ({ taskId, status: "started" as const }))].map((t) => ({ type: "task" as const, ...t, gameMode: gameMode!, at: Date.now() })),
+                  [
+                    ...finished.map((taskId) => ({ taskId, status: "finished" as const })),
+                    ...started.map((taskId) => ({ taskId, status: "started" as const })),
+                    ...failed.map((taskId) => ({ taskId, status: "failed" as const })),
+                  ].map((t) => ({ type: "task" as const, ...t, gameMode: gameMode!, at: Date.now() })),
                   tr("Capture", "Screenshot"),
                 )
               }
