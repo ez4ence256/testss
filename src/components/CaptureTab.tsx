@@ -18,10 +18,12 @@ interface Props {
   tasks: Task[];
   /** Image reçue par Ctrl+V ailleurs dans l'app ; `n` change à chaque collage. */
   pasted: { blob: Blob; n: number } | null;
-  /** Ajoute les quêtes cochées ; renvoie le message à afficher (map affichée ou non). */
-  onApply: (taskIds: string[], replace: boolean) => string;
-  /** Liste des tâches d'un marchand : quêtes bleues terminées, brunes en cours, grises ratées (comme les événements du Monitor). */
-  onStatus: (finished: string[], started: string[], failed: string[]) => void;
+  /**
+   * Quêtes cochées, comme des événements du Monitor : bleues terminées, grises ratées, les autres en cours
+   * (ajoutées si elles ne sont pas déjà sélectionnées ; la sélection actuelle reste). Renvoie le message
+   * de map affichée, ou null.
+   */
+  onApply: (finished: string[], started: string[], failed: string[]) => string | null;
 }
 
 type State =
@@ -42,11 +44,10 @@ const STATUS_LABELS: Record<string, [string, string]> = {
   "recognizing text": ["Lecture du texte…", "Reading the text…"],
 };
 
-export function CaptureTab({ tasks, pasted, onApply, onStatus }: Props) {
+export function CaptureTab({ tasks, pasted, onApply }: Props) {
   const [state, setState] = useState<State>({ step: "idle" });
   const [preview, setPreview] = useState<string | null>(null);
   const [checked, setChecked] = useState<Set<string>>(new Set());
-  const [replace, setReplace] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   // quêtes ajoutées à la main sur l'écran de vérification (l'OCR rate parfois une ligne sur une photo)
@@ -156,7 +157,13 @@ export function CaptureTab({ tasks, pasted, onApply, onStatus }: Props) {
   // lignes à fond coloré : capture de la liste des tâches d'un marchand
   const toned = state.step === "review" ? [...state.result.recognized, ...state.result.uncertain].filter((m) => m.tone) : [];
   const toneIds = (tone: Tone) => toned.filter((m) => m.tone === tone && checked.has(m.taskId)).map((m) => m.taskId);
-  const [finished, started, failed] = [toneIds("blue"), toneIds("brown"), toneIds("grey")];
+  const [finished, failed] = [toneIds("blue"), toneIds("grey")];
+  const started = [...checked].filter((id) => !finished.includes(id) && !failed.includes(id));
+  const counts = [
+    started.length && tr(`${started.length} en cours`, `${started.length} in progress`),
+    finished.length && tr(`${finished.length} terminée(s)`, `${finished.length} completed`),
+    failed.length && tr(`${failed.length} ratée(s)`, `${failed.length} failed`),
+  ].filter(Boolean);
 
   return (
     <div
@@ -281,39 +288,25 @@ export function CaptureTab({ tasks, pasted, onApply, onStatus }: Props) {
               </ul>
             )}
           </section>
-          {finished.length + started.length + failed.length > 0 && (
-            <div className="btn-row">
-              <button
-                className="btn btn-primary"
-                onClick={() => {
-                  onStatus(finished, started, failed);
-                  setState({ step: "idle" });
-                }}
-              >
-                {tr(
-                  `Mettre à jour mes quêtes (${finished.length} terminées, ${started.length} en cours${failed.length ? `, ${failed.length} ratées` : ""})`,
-                  `Update my quests (${finished.length} completed, ${started.length} in progress${failed.length ? `, ${failed.length} failed` : ""})`,
-                )}
-              </button>
-            </div>
-          )}
           {checked.size > 0 && (
             <>
-              <label className="check">
-                <input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} />
-                {tr("Remplacer ma sélection actuelle", "Replace my current selection")}
-              </label>
               <div className="btn-row">
                 <button
                   className="btn btn-primary"
                   onClick={() => {
-                    setMessage(onApply([...checked], replace));
+                    setMessage(onApply(finished, started, failed));
                     setState({ step: "idle" });
                   }}
                 >
-                  {tr(`Ajouter à la sélection (${checked.size})`, `Add to selection (${checked.size})`)}
+                  {tr(`Ajouter à mes quêtes (${counts.join(", ")})`, `Add to my quests (${counts.join(", ")})`)}
                 </button>
               </div>
+              <p className="muted small">
+                {tr(
+                  "Ta sélection actuelle reste : les quêtes déjà sélectionnées ne bougent pas, les nouvelles s'ajoutent et celles qui les débloquent sont grisées.",
+                  "Your current selection stays: quests already selected don't change, new ones are added and the ones that unlock them are greyed out.",
+                )}
+              </p>
             </>
           )}
           {state.result.unmatched.length > 0 && (

@@ -851,7 +851,9 @@ export default function App() {
             <CaptureTab
               tasks={tasks}
               pasted={pastedImage}
-              onStatus={(finished, started, failed) =>
+              onApply={(finished, started, failed) => {
+                // nouvelles quêtes en cours seulement (les déjà sélectionnées ne bougent pas) : pour choisir la map
+                const added = started.filter((id) => !mode.selected.some((s) => s.taskId === id)).map((id) => tasksById.get(id)).filter((t): t is Task => Boolean(t));
                 applyMonitor(
                   [
                     ...finished.map((taskId) => ({ taskId, status: "finished" as const })),
@@ -859,30 +861,12 @@ export default function App() {
                     ...failed.map((taskId) => ({ taskId, status: "failed" as const })),
                   ].map((t) => ({ type: "task" as const, ...t, gameMode: gameMode!, at: Date.now() })),
                   tr("Capture", "Screenshot"),
-                )
-              }
-              onApply={(taskIds, replace) => {
-                dispatch({ type: "selectTasks", taskIds, replace });
-                const added = taskIds.map((id) => tasksById.get(id)).filter((t): t is Task => Boolean(t));
-                greyPrerequisites(added.filter((t) => replace || !mode.selected.some((s) => s.taskId === t.id)), replace);
+                );
                 const mapId = dominantMap(added);
-                const k = added.length;
-                const n = tr(
-                  `${k} quête${k > 1 ? "s" : ""} ${replace ? "sélectionnée" : "ajoutée"}${k > 1 ? "s" : ""}.`,
-                  `${k} quest${k > 1 ? "s" : ""} ${replace ? "selected" : "added"}.`,
-                );
-                if (mapId && maps.some((m) => m.id === mapId)) {
-                  dispatch({ type: "setMap", mapId });
-                  const name = maps.find((m) => m.id === mapId)!.name;
-                  return tr(
-                    `${n} Map affichée : ${name} (la plupart de leurs points s'y trouvent).`,
-                    `${n} Displayed map: ${name} (most of their points are there).`,
-                  );
-                }
-                return tr(
-                  `${n} Leurs points sont répartis sur plusieurs maps (ou absents) : la map affichée n'a pas changé.`,
-                  `${n} Their points are spread over several maps (or missing): the displayed map did not change.`,
-                );
+                if (!mapId || !maps.some((m) => m.id === mapId)) return null;
+                dispatch({ type: "setMap", mapId });
+                const name = maps.find((m) => m.id === mapId)!.name;
+                return tr(`Map affichée : ${name} (la plupart des points des nouvelles quêtes s'y trouvent).`, `Displayed map: ${name} (most points of the new quests are there).`);
               }}
             />
           )}

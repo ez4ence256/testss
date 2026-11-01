@@ -1,7 +1,7 @@
 {
   "name": "tarkov-quest-planner",
   "private": true,
-  "version": "0.8.51",
+  "version": "0.8.52",
   "type": "module",
   "description": "Planificateur de quêtes Escape from Tarkov sur carte (données tarkov.dev)",
   "scripts": {
