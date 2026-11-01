@@ -182,7 +182,7 @@ export type Action =
    */
   | { type: "applyQuestStatus"; done: string[]; undone?: string[]; failed: string[]; unfailed?: string[]; deselect?: string[]; select?: string[] }
   /** Reprend la progression d'anciens ids (quêtes du wiki devenues tarkov.dev) : "" = supprimer la clé. */
-  | { type: "renameIds"; tasks: Record<string, string>; objectives: Record<string, string> }
+  | { type: "renameIds"; tasks: Record<string, string>; objectives: Record<string, string>; tick?: Record<string, number> }
   | { type: "import"; state: AppState }
   /** Remet à "pas fait" les objectifs donnés (une quête, retirée aussi des échouées si taskId), dans le mode courant seulement. */
   | { type: "resetProgress"; objectiveIds: string[]; taskId?: string }
@@ -327,7 +327,7 @@ export function reducer(state: AppState, action: Action): AppState {
         return {
           ...m,
           selected,
-          done: rename(m.done, action.objectives),
+          done: { ...action.tick, ...rename(m.done, action.objectives) },
           manual: rename(m.manual, action.objectives),
           ...(m.failed ? { failed: rename(m.failed, action.tasks) } : {}),
         };

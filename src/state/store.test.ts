@@ -248,5 +248,7 @@ describe("renameIds", () => {
     const m = { ...emptyModeState(), selected: [{ taskId: "w", color: 3 }, { taskId: "real", color: 1 }], done: { "w-1": 7, "w-3": 8, x: 1 }, failed: { w: true as const }, manual: { "w-1": { mapId: "m", x: 1, z: 2 } as never } };
     const s = reducer({ gameMode: "pve", modes: { pve: m } } as unknown as AppState, { type: "renameIds", tasks: { w: "real" }, objectives: { "w-1": "r1", "w-3": "" } });
     expect(s.modes.pve).toMatchObject({ selected: [{ taskId: "real", color: 1 }], done: { r1: 7, x: 1 }, failed: { real: true }, manual: { r1: expect.anything() } });
+    const t = reducer({ gameMode: "pve", modes: { pve: m } } as unknown as AppState, { type: "renameIds", tasks: { w: "real" }, objectives: { "w-1": "" }, tick: { r1: 7, r2: 7 } });
+    expect(t.modes.pve?.done).toMatchObject({ r1: 7, r2: 7 });
   });
 });

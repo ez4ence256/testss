@@ -34,7 +34,7 @@ import { planMonitorBatch } from "./lib/monitorQuests";
 import { branchFailures, prerequisiteChanges } from "./lib/questChain";
 import { computeNeeds } from "./lib/itemNeeds";
 import { loadHideout, type HideoutStation } from "./api/itemList";
-import { buildEventTasks, loadEventEntries, wikiMigration, type EventEntry } from "./api/eventQuests";
+import { buildEventTasks, loadEventEntries, eventSlug, wikiMigration, type EventEntry } from "./api/eventQuests";
 import { RoomControl } from "./components/RoomControl";
 import { LegacyRoomPrompt } from "./components/LegacyRoomPrompt";
 import { TeammatePanel } from "./components/TeammatePanel";
@@ -428,13 +428,15 @@ export default function App() {
   useEffect(() => setChainNotice(null), [gameMode]);
   // tarkov.dev vient d'ajouter une quête qu'on lisait sur le wiki : sélection, échec et cases cochées passent au vrai id
   useEffect(() => {
-    if (!data) return;
-    const mig = wikiMigration(mode, data.tasks);
+    if (!data || !eventsSettled) return;
+    // nb d'objectifs wiki (même règle que buildEventTasks), y compris des quêtes déjà masquées par le dédoublonnage
+    const counts = eventsSettled === "ok" ? Object.fromEntries(eventEntries.map((e) => [`wiki-${eventSlug(e.title)}`, e.objectives.length || 1])) : undefined;
+    const mig = wikiMigration(mode, data.tasks, counts);
     if (!mig) return;
     dispatch({ type: "renameIds", ...mig });
     const n = Object.keys(mig.tasks).length;
     setChainNotice({ text: tr(`${n} quête(s) du wiki maintenant dans tarkov.dev : progression reprise.`, `${n} wiki quest(s) now in tarkov.dev: progress carried over.`) });
-  }, [data, gameMode, mode]);
+  }, [data, gameMode, mode, eventsSettled, eventEntries]);
   // sélectionnées mais absentes des données (quête retirée du site) : proposées au retrait, jamais retirées seules
   const ghostIds = useMemo(
     () =>
@@ -989,6 +991,17 @@ export default function App() {
               <span className="scav-check-long">{tr("Extracts Scav", "Scav extracts")}</span>
               <span className="scav-check-short" aria-hidden="true">Scav</span>
             </label>
+            {currentMap?.normalizedName === "the-labyrinth" && (
+              <a
+                className="btn btn-small lab-tuto"
+                href="https://www.youtube.com/watch?v=Ek7oB_AOVU4&t=28s"
+                target="_blank"
+                rel="noopener noreferrer"
+                title={tr("Vidéo YouTube : comment résoudre les puzzles du Labyrinthe", "YouTube video: how to solve the Labyrinth puzzles")}
+              >
+                {tr("Tuto puzzles", "Puzzle guide")}
+              </a>
+            )}
             {kappaOnly && (
               <button
                 className="btn btn-small kappa-chip"

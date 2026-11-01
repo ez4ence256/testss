@@ -631,6 +631,12 @@ button:focus-visible {
   color: var(--accent-2);
   border-color: var(--accent);
 }
+/* vidéo des puzzles, sur le Labyrinthe seulement */
+.lab-tuto {
+  flex: none;
+  white-space: nowrap;
+  text-decoration: none;
+}
 /* carte étroite : « Kappa » seul, pour garder le nom de la map lisible */
 .kappa-chip-short {
   display: none;

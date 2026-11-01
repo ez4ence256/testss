@@ -359,7 +359,7 @@ export function CaptureTab({ tasks, pasted, onApply, selectedIds }: Props) {
                   "Currently selected quests that are not in this capture are deselected (not completed, not failed: just removed from the selection). Useful after filming your whole list of active quests. Story chapters are not touched.",
                 )}
                 {removed.length > 0 &&
-                  " " + tr(`Retire ${removed.length} quête(s) de ta sélection : `, `Removes ${removed.length} quest(s) from your selection: `) + removed.map((id) => tasksById.get(id)?.name ?? id).join(", ") + "."}
+                  " " + tr(`Retire ${removed.length} quête(s) de ta sélection : `, `Removes ${removed.length} quest(s) from your selection: `) + removed.map((id) => tasksById.get(id)?.name ?? (id.startsWith("wiki-") ? id.slice(5).replace(/-/g, " ") : tr("quête retirée du site", "quest removed from the site"))).join(", ") + "."}
               </p>
             </div>
           )}
