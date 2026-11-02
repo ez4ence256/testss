@@ -24,6 +24,7 @@ import { isTaskFinished } from "../lib/points";
 import { isGreyed } from "../lib/questChain";
 import { STATUS_LABELS } from "../lib/questWiki";
 import { ObjectiveItems } from "./ObjectiveItems";
+import { TaskRewardList } from "./QuestTab";
 import type { ItemNeed, NeedSource } from "../lib/itemNeeds";
 import { isStaleBuildError, staleBuildMessage } from "../lib/staleBuild";
 import { ContainerScan, type ScanState } from "./ContainerScan";
@@ -90,6 +91,8 @@ interface Props {
   /** La planque compte-t-elle dans les objets à garder ? (sinon le filtre « Planque » propose de l'inclure) */
   hideoutIncluded?: boolean;
   onIncludeHideout?: () => void;
+  /** Niveaux construits de la planque (stationId -> niveau, -1 = ignorée) : niveaux déjà faits grisés. */
+  hideoutLevels?: Record<string, number>;
   /** « rail » : bouton de la barre latérale (icône au-dessus du libellé). */
   variant?: "rail";
 }
@@ -121,7 +124,7 @@ export function ItemFinder(props: Props) {
   );
 }
 
-function FinderDialog({ gameMode, lang, tasks, traders, maps, itemNames, itemIcons, onShowQuest, onShowSpots, onAddPoint, done, failed, needs, hideoutIncluded, onIncludeHideout, onClose }: Props & { onClose: () => void }) {
+function FinderDialog({ gameMode, lang, tasks, traders, maps, itemNames, itemIcons, onShowQuest, onShowSpots, onAddPoint, done, failed, needs, hideoutIncluded, onIncludeHideout, hideoutLevels, onClose }: Props & { onClose: () => void }) {
   const [list, setList] = useState<ListedItem[] | null>(null);
   const [error, setError] = useState(false);
   const [query, setQuery] = useState("");
@@ -530,6 +533,7 @@ function FinderDialog({ gameMode, lang, tasks, traders, maps, itemNames, itemIco
                 onAddPoint={onAddPoint}
                 done={done}
                 failed={failed}
+                hideoutLevels={hideoutLevels}
                 need={needs.get(selected.id)}
                 kappaOnly={kappaOnly}
               />
@@ -658,6 +662,7 @@ function Usage(p: {
   onAddPoint: (point: NewPoint) => void;
   done: Record<string, number>;
   failed?: Record<string, true>;
+  hideoutLevels?: Record<string, number>;
   need?: ItemNeed;
   /** « Kappa seulement » : les quêtes non demandées pour la Kappa passent dans un bloc à part. */
   kappaOnly?: boolean;
@@ -1006,6 +1011,16 @@ function Usage(p: {
                             </li>
                           ))}
                         </ul>
+                        {(() => {
+                          const rw = r.task.details?.rewards;
+                          if (!rw || (rw.experience <= 0 && !rw.items.length && !rw.standing.length && !rw.offerUnlocks.length && !rw.skills.length)) return null;
+                          return (
+                            <details className="finder-quest-rewards">
+                              <summary>{tr("Récompenses", "Rewards")}</summary>
+                              <TaskRewardList rewards={rw} traders={p.traders} itemNames={p.itemNames} itemIcons={p.itemIcons} />
+                            </details>
+                          );
+                        })()}
                         <button className="btn btn-small" onClick={() => p.onShowQuest(r.taskId)}>
                           <UiIcon id="scroll-text" size={14} /> {tr("Ouvrir la fiche complète", "Open the full quest page")}
                         </button>
@@ -1022,16 +1037,24 @@ function Usage(p: {
               <p className="muted finder-empty">{tr("Aucune amélioration du hideout ne l'exige.", "No hideout upgrade needs it.")}</p>
             ) : (
               <ul className="finder-cards">
-                {hideoutRows.map((h) => (
-                  <li key={`${h.stationId}-${h.level}`} className="finder-card finder-row">
-                    <strong>{h.name}</strong>
-                    <span className="finder-pill">{`${tr("niv.", "lvl")} ${h.level}`}</span>
-                    <span className="finder-right">
-                      <strong>×{h.count}</strong>
-                      {h.fir && <span className="finder-pill fir">FIR</span>}
-                    </span>
-                  </li>
-                ))}
+                {hideoutRows.map((h) => {
+                  // niveau déjà construit (ou station ignorée dans l'onglet Planque) : plus besoin de le donner
+                  const built = p.hideoutLevels?.[h.stationId] ?? 0;
+                  const finished = built < 0 || h.level <= built;
+                  return (
+                    <li key={`${h.stationId}-${h.level}`} className={`finder-card finder-row${finished ? " is-done" : ""}`}>
+                      <strong>
+                        {h.name}
+                        {finished && <span className="tag finder-done-tag"><UiIcon id="check" size={12} /> {built < 0 ? tr("Ignorée", "Ignored") : tr("Construit", "Built")}</span>}
+                      </strong>
+                      <span className="finder-pill">{`${tr("niv.", "lvl")} ${h.level}`}</span>
+                      <span className="finder-right">
+                        <strong>×{h.count}</strong>
+                        {h.fir && <span className="finder-pill fir">FIR</span>}
+                      </span>
+                    </li>
+                  );
+                })}
               </ul>
             ),
           )}

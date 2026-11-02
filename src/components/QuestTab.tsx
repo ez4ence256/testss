@@ -6,7 +6,7 @@
 // Reste atteignable même quand tous les points sont faits (donc absents de la carte) :
 // depuis la popup d'un autre point de la quête, ou depuis la quête dans le panneau.
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import type { GameMap, Task, Trader } from "../types";
+import type { GameMap, Task, TaskRewards, Trader } from "../types";
 import { ICON_LABELS, categoryOf } from "../lib/objectiveTypes";
 import { taskProgress } from "../lib/points";
 import { isGreyed } from "../lib/questChain";
@@ -204,6 +204,39 @@ function ItemIcon({ url, name }: { url?: string; name: string }) {
 }
 
 const fmt = (n: number) => n.toLocaleString(getLang() === "en" ? "en-US" : "fr-FR");
+
+/** Liste compacte des récompenses tarkov.dev d'une quête (utilisée par le chercheur d'objets). */
+export function TaskRewardList({ rewards, traders, itemNames, itemIcons }: { rewards: TaskRewards; traders: Trader[]; itemNames: Record<string, string>; itemIcons: Record<string, string> }) {
+  const traderName = (id: string) => traders.find((t) => t.id === id)?.name ?? "?";
+  const itemName = (id: string) => itemNames[id] ?? tr(`objet inconnu (${id})`, `unknown item (${id})`);
+  const icon = (id: string) => <ItemIcon url={itemIcons[id]} name={itemName(id)} />;
+  return (
+    <ul className="plain-list">
+      {rewards.experience > 0 && <li>+{fmt(rewards.experience)} EXP</li>}
+      {rewards.items.map((r, i) => (
+        <li key={`i${i}`}>
+          {icon(r.itemId)}
+          {fmt(r.count)} × {itemName(r.itemId)}
+        </li>
+      ))}
+      {rewards.standing.map((s, i) => (
+        <li key={`s${i}`}>
+          {tr("Réputation", "Reputation")} {traderName(s.traderId)} {s.value > 0 ? "+" : ""}
+          {s.value}
+        </li>
+      ))}
+      {rewards.offerUnlocks.map((u, i) => (
+        <li key={`o${i}`}>
+          {icon(u.itemId)}
+          {tr(`Débloque l'achat de ${itemName(u.itemId)} chez ${traderName(u.traderId)} (niveau ${u.level})`, `Unlocks purchase of ${itemName(u.itemId)} at ${traderName(u.traderId)} (level ${u.level})`)}
+        </li>
+      ))}
+      {rewards.skills.map((s, i) => (
+        <li key={`k${i}`}>{tr(`Compétence « ${s.skill} » : niveau ${s.level}`, `Skill "${s.skill}": level ${s.level}`)}</li>
+      ))}
+    </ul>
+  );
+}
 
 export function QuestTab(p: Props) {
   const tasksById = useMemo(() => new Map(p.tasks.map((t) => [t.id, t])), [p.tasks]);

@@ -2778,7 +2778,8 @@ kbd {
   margin-left: auto;
 }
 /* quête déjà terminée : grisée mais cliquable */
-.finder-quest.is-done {
+.finder-quest.is-done,
+.finder-row.is-done {
   opacity: 0.5;
 }
 .finder-quest.is-done:hover,
@@ -2832,6 +2833,17 @@ kbd {
   margin-top: 1rem;
 }
 .finder-where-more > summary {
+  cursor: pointer;
+  color: var(--accent-2);
+}
+.finder-quest-rewards {
+  margin: 0.5rem 0;
+}
+.finder-quest-rewards .plain-list {
+  list-style: none;
+  padding-left: 0;
+}
+.finder-quest-rewards > summary {
   cursor: pointer;
   color: var(--accent-2);
 }
