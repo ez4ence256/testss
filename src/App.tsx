@@ -34,7 +34,7 @@ import { planMonitorBatch } from "./lib/monitorQuests";
 import { branchFailures, prerequisiteChanges } from "./lib/questChain";
 import { computeNeeds } from "./lib/itemNeeds";
 import { loadHideout, type HideoutStation } from "./api/itemList";
-import { buildEventTasks, knownQuestKeys, loadEventEntries, eventSlug, vanishedWikiIds, wikiMigration, type EventEntry } from "./api/eventQuests";
+import { buildEventTasks, knownQuestKeys, loadEventEntries, eventSlug, vanishedWikiIds, removedFromGame, wikiMigration, type EventEntry } from "./api/eventQuests";
 import { RoomControl } from "./components/RoomControl";
 import { LegacyRoomPrompt } from "./components/LegacyRoomPrompt";
 import { TeammatePanel } from "./components/TeammatePanel";
@@ -188,7 +188,9 @@ export default function App() {
   // en échec, les wiki-… ne le sont jamais (« Retirer » ferait perdre leur progression)
   const [eventsSettled, setEventsSettled] = useState<"ok" | "failed" | null>(null);
   // liste du wiki relue à l'instant (jamais depuis le cache) : seule base pour retirer les quêtes wiki disparues
-  const [freshListing, setFreshListing] = useState<{ titles: string[]; previousCount: number | null } | null>(null);
+  const [freshListing, setFreshListing] = useState<{ titles: string[]; previousCount: number | null; historical: string[] } | null>(null);
+  // quêtes « Historical content » du wiki : tarkov.dev les liste encore, mais elles n'existent plus dans le jeu
+  const [historical, setHistorical] = useState<string[]>([]);
   const dataReady = Boolean(data);
   const dataFetchedAt = data?.fetchedAt;
   useEffect(() => {
@@ -198,9 +200,10 @@ export default function App() {
       (r) => {
         // une liste fraîche reste valable même si l'effet a été relancé entre-temps (données tarkov.dev
         // rafraîchies au démarrage) : le passage suivant lit le cache et ne la redonnerait pas
-        if (r.status === "fresh") setFreshListing({ titles: r.listed, previousCount: r.previousCount });
+        if (r.status === "fresh") setFreshListing({ titles: r.listed, previousCount: r.previousCount, historical: r.historical });
         if (cancelled) return;
         setEventEntries(r.entries);
+        setHistorical(r.historical);
         setEventsSettled("ok");
       },
       (e) => {
@@ -214,7 +217,11 @@ export default function App() {
     };
     // relancé quand tarkov.dev se rafraîchit (nouveau `known`), pas à chaque changement de `data`
   }, [dataReady, dataFetchedAt]);
-  const tasks = useMemo(() => (data ? [...data.tasks, ...buildEventTasks(eventEntries, data)] : []), [data, eventEntries]);
+  const tasks = useMemo(() => {
+    if (!data) return [];
+    const gone = removedFromGame(data.tasks, historical);
+    return [...data.tasks.filter((t) => !gone.has(t.id)), ...buildEventTasks(eventEntries, data)];
+  }, [data, eventEntries, historical]);
   const maps = useMemo(() => data?.maps ?? [], [data]);
   const tasksById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
 
@@ -450,18 +457,25 @@ export default function App() {
     const n = Object.keys(mig.tasks).length;
     setChainNotice({ text: tr(`${n} quête(s) du wiki maintenant dans tarkov.dev : progression reprise.`, `${n} wiki quest(s) now in tarkov.dev: progress carried over.`) });
   }, [data, gameMode, mode, eventsSettled, eventEntries]);
-  // quête wiki disparue du wiki (page supprimée ou « Historical content ») : retirée de la sélection, sans « Annuler »
+  // quête wiki disparue du wiki (page supprimée ou « Historical content »), ou quête tarkov.dev retirée du jeu : retirée de la sélection, sans « Annuler »
   useEffect(() => {
     if (!data || !freshListing) return;
     const migratable = new Set(Object.keys(wikiMigration(mode, data.tasks)?.tasks ?? {}));
-    const ids = vanishedWikiIds(mode.selected.map((s) => s.taskId), freshListing.titles, freshListing.previousCount, migratable);
-    if (!ids.length) return;
-    dispatch({ type: "applyQuestStatus", done: [], failed: [], deselect: ids });
-    const names = ids.map((id) => id.slice(5).replace(/-/g, " ")).join(", ");
+    const selected = mode.selected.map((s) => s.taskId);
+    const ids = vanishedWikiIds(selected, freshListing.titles, freshListing.previousCount, migratable);
+    const gone = removedFromGame(data.tasks, freshListing.historical);
+    const removed = selected.filter((id) => gone.has(id));
+    if (!ids.length && !removed.length) return;
+    dispatch({ type: "applyQuestStatus", done: [], failed: [], deselect: [...ids, ...removed] });
+    const wikiNames = ids.map((id) => id.slice(5).replace(/-/g, " "));
+    const goneNames = removed.map((id) => data.tasks.find((t) => t.id === id)?.name ?? id);
+    const plural = ids.length + removed.length > 1;
+    const why = [
+      wikiNames.length && tr(`${wikiNames.join(", ")} : plus sur le wiki`, `${wikiNames.join(", ")}: no longer on the wiki`),
+      goneNames.length && tr(`${goneNames.join(", ")} : n'existe plus dans le jeu`, `${goneNames.join(", ")}: no longer in the game`),
+    ].filter(Boolean).join(" ; ");
     setChainNotice({
-      text: ids.length > 1
-        ? tr(`${names} retirées de ta sélection : elles ne sont plus sur le wiki.`, `${names} removed from your selection: no longer on the wiki.`)
-        : tr(`${names} retirée de ta sélection : elle n'est plus sur le wiki.`, `${names} removed from your selection: no longer on the wiki.`),
+      text: tr(`${plural ? "Quêtes retirées" : "Quête retirée"} de ta sélection (${why}).`, `${plural ? "Quests" : "Quest"} removed from your selection (${why}).`),
     });
   }, [data, mode, freshListing]);
   // sélectionnées mais absentes des données (quête retirée du site) : proposées au retrait, jamais retirées seules

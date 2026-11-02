@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GameMap, Task, Trader } from "../types";
-import { buildEventTasks, eventSlug, knownQuestKeys, loadEventEntries, parseEventQuest, vanishedWikiIds, wikiMigration } from "./eventQuests";
+import { buildEventTasks, eventSlug, knownQuestKeys, loadEventEntries, parseEventQuest, removedFromGame, vanishedWikiIds, wikiMigration } from "./eventQuests";
 
 // Extrait réel (réduit) de la page « All-Inclusive Support » du wiki
 const ALL_INCLUSIVE = `{{Event content}}
@@ -161,11 +161,13 @@ describe("loadEventEntries", () => {
     expect(r.status).toBe("fresh");
     expect(r.previousCount).toBeNull();
     expect(r.listed).toEqual(["All-Inclusive Support", "Arena Win", "Known Quest"]);
+    expect(r.historical).toEqual(["Old One"]);
     expect(r.entries.map((e) => e.title)).toEqual(["All-Inclusive Support"]);
     expect(fn).toHaveBeenCalledTimes(3);
     // dans les 6 h : aucune requête
     const c = await loadEventEntries(known);
     expect(c.status).toBe("cached");
+    expect(c.historical).toEqual(["Old One"]);
     expect(c.entries.map((e) => e.title)).toEqual(["All-Inclusive Support"]);
     expect(fn).toHaveBeenCalledTimes(3);
   });
@@ -191,6 +193,7 @@ describe("loadEventEntries", () => {
     fail = true;
     const r = (await run(loadEventEntries(known))) as Awaited<ReturnType<typeof loadEventEntries>>;
     expect(r.status).toBe("stale");
+    expect(r.historical).toEqual(["Old One"]);
     expect(r.entries.map((e) => e.title)).toEqual(["All-Inclusive Support"]);
   });
 
@@ -201,6 +204,19 @@ describe("loadEventEntries", () => {
     const assertion = expect(p).rejects.toThrow();
     await vi.runAllTimersAsync();
     await assertion;
+  });
+});
+
+describe("removedFromGame", () => {
+  const tasks = [
+    { id: "a", nameEn: "Private Clinic", wikiLink: "https://escapefromtarkov.fandom.com/wiki/Private_Clinic" },
+    { id: "b", nameEn: "Signal - Part 3", wikiLink: null },
+    { id: "c", nameEn: "Debut", wikiLink: "https://escapefromtarkov.fandom.com/wiki/Debut" },
+    { id: "d", nameEn: "Private Clinics", wikiLink: "" },
+  ];
+  it("masque la page historique (casse ignorée), garde le reste et les quasi-homonymes", () => {
+    expect([...removedFromGame(tasks, ["private clinic", "Signal - Part 3"])].sort()).toEqual(["a", "b"]);
+    expect(removedFromGame(tasks, []).size).toBe(0);
   });
 });
 

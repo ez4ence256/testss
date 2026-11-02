@@ -25,6 +25,8 @@ export interface EventEntry {
 
 interface EventCache {
   listed: string[];
+  /** pages « Historical content » (retirées du jeu) ; absent des caches d'avant v5 */
+  historical?: string[];
   listedAt: number;
   /** nombre de pages de la liste précédente (garde-fou de vanishedWikiIds) */
   prevCount: number | null;
@@ -33,8 +35,8 @@ interface EventCache {
   fetchedAt: number;
 }
 
-// v4 : liste « Category:Quests », entrées cumulées par titre
-const CACHE_KEY = "events:v4";
+// v5 : liste « Category:Quests », entrées cumulées par titre, + titres historiques
+const CACHE_KEY = "events:v5";
 const LIST_TTL_MS = 6 * 3600_000;
 const BATCH = 50;
 const MAX_CONTINUATIONS = 5;
@@ -191,8 +193,19 @@ export function vanishedWikiIds(selectedIds: string[], listedTitles: string[], p
   return selectedIds.filter((id) => id.startsWith("wiki-") && !migratable.has(id) && !listed.has(slugKey(id.slice(5))));
 }
 
-/** Titres de « Category:Quests » hors « Historical content », la page d'aperçu « Quests » et les « (Prestige n) » (PvP seulement). */
-async function listQuestPages(): Promise<string[]> {
+/**
+ * Ids des quêtes tarkov.dev dont la page wiki (ou le nom anglais) est une page « Historical content » : retirées du jeu.
+ * Comparaison stricte (casse seule ignorée) pour éviter les faux positifs.
+ */
+export function removedFromGame(tasks: Pick<Task, "id" | "nameEn" | "wikiLink">[], historical: string[]): Set<string> {
+  const h = new Set(historical.map((t) => t.toLowerCase()));
+  const ids = new Set<string>();
+  for (const t of tasks) if ([wikiTitleFromLink(t.wikiLink), t.nameEn].some((x) => x && h.has(x.toLowerCase()))) ids.add(t.id);
+  return ids;
+}
+
+/** Titres de « Category:Quests » (hors la page d'aperçu « Quests » et les « (Prestige n) » PvP), séparés en listés et « Historical content ». */
+async function listQuestPages(): Promise<{ listed: string[]; historical: string[] }> {
   const pages = new Map<number, { title: string; historical: boolean }>();
   let cont: Record<string, string> = {};
   for (let i = 0; i < MAX_CONTINUATIONS; i++) {
@@ -215,7 +228,11 @@ async function listQuestPages(): Promise<string[]> {
     }
     if (!json.continue) {
       // shortcut: « (Prestige n) » ignoré : tarkov.dev n'a que Prestige 1-4 en PvP, à revoir s'il les ajoute en PvE
-      return [...pages.values()].filter((p) => !p.historical && p.title !== "Quests" && !/\(Prestige \d+\)/.test(p.title)).map((p) => p.title);
+      const all = [...pages.values()].filter((p) => p.title !== "Quests");
+      return {
+        listed: all.filter((p) => !p.historical && !/\(Prestige \d+\)/.test(p.title)).map((p) => p.title),
+        historical: all.filter((p) => p.historical).map((p) => p.title),
+      };
     }
     cont = json.continue as Record<string, string>;
   }
@@ -226,6 +243,8 @@ export interface LoadedEvents {
   entries: EventEntry[];
   /** titres listés (non historiques) */
   listed: string[];
+  /** titres « Historical content » : quêtes retirées du jeu */
+  historical: string[];
   listedAt: number;
   /** « fresh » : liste relue à l'instant ; « cached » : liste de moins de 6 h ; « stale » : wiki en échec, ancienne liste */
   status: "fresh" | "cached" | "stale";
@@ -233,14 +252,14 @@ export interface LoadedEvents {
   previousCount: number | null;
 }
 
-function result(c: Pick<EventCache, "listed" | "listedAt" | "prevCount" | "entries">, status: LoadedEvents["status"]): LoadedEvents {
+function result(c: Pick<EventCache, "listed" | "historical" | "listedAt" | "prevCount" | "entries">, status: LoadedEvents["status"]): LoadedEvents {
   const entries = c.listed.map((t) => c.entries[t]).filter((e): e is EventEntry => Boolean(e));
   entries.sort((a, b) => a.title.localeCompare(b.title, "en"));
-  return { entries, listed: c.listed, listedAt: c.listedAt, status, previousCount: c.prevCount };
+  return { entries, listed: c.listed, historical: c.historical ?? [], listedAt: c.listedAt, status, previousCount: c.prevCount };
 }
 
 async function fetchEventEntries(known: Set<string>, cached: EventCache | null): Promise<LoadedEvents> {
-  const listed = await listQuestPages();
+  const { listed, historical } = await listQuestPages();
   const entries = { ...(cached?.entries ?? {}) };
   const todo = listed.filter((t) => !known.has(norm(t)) && !(t in entries));
   for (let i = 0; i < todo.length; i += BATCH) {
@@ -255,7 +274,7 @@ async function fetchEventEntries(known: Set<string>, cached: EventCache | null):
       entries[p.title] = entry && !entry.locations.some((l) => /^arena$/i.test(l)) ? entry : null;
     }
   }
-  const next = { listed, listedAt: Date.now(), prevCount: cached ? cached.listed.length : null, entries };
+  const next = { listed, historical, listedAt: Date.now(), prevCount: cached ? cached.listed.length : null, entries };
   writeCache(CACHE_KEY, { ...next, fetchedAt: next.listedAt } satisfies EventCache);
   return result(next, "fresh");
 }
